@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "TikTok Transcript Generator",
+  "version": "0.1.0",
+  "description": "Add a transcript button on TikTok video pages and call GetTheScript extension API.",
+  "permissions": ["storage", "clipboardWrite"],
+  "host_permissions": ["https://*/*", "http://*/*"],
+  "action": {
+    "default_title": "TikTok Transcript Generator",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.tiktok.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

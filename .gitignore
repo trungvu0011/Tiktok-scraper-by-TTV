@@ -1,0 +1,25 @@
+# --- Secrets / live session (NEVER commit) ---
+tiktok_state.json
+*state*.json
+.browser_profile/
+**/.browser_profile/
+*.log
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# --- Node / editor / OS ---
+node_modules/
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- Regenerable scraped output (code only) ---
+Data scraped/
+**/output/

@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TikTok Profile Videos Scraper</title>
+<style>
+  :root { --bg:#0f0f14; --card:#1b1b24; --line:#2a2a37; --fg:#f1f1f4;
+          --muted:#9a9aa8; --pink:#fe2c55; --cyan:#25f4ee; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+         background:var(--bg); color:var(--fg); }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h1 span { color: var(--pink); }
+  p.sub { color: var(--muted); margin: 0 0 24px; }
+  .panel { background:var(--card); border:1px solid var(--line);
+           border-radius:14px; padding:18px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; }
+  input[type=text] { flex:1; min-width:220px; padding:13px 15px; font-size:15px;
+        border-radius:10px; border:1px solid var(--line); background:#101017;
+        color:var(--fg); outline:none; }
+  input[type=text]:focus { border-color:var(--cyan); }
+  button { padding:13px 22px; font-size:15px; font-weight:600; border:none;
+           border-radius:10px; cursor:pointer; background:var(--pink);
+           color:#fff; transition:.15s; }
+  button:hover { filter:brightness(1.1); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button.ghost { background:transparent; border:1px solid var(--line);
+                 color:var(--fg); }
+  .status { margin:16px 0; min-height:22px; color:var(--muted); font-size:14px; }
+  .status.err { color:#ff7a90; }
+  .spinner { display:inline-block; width:14px; height:14px; border:2px solid var(--line);
+             border-top-color:var(--cyan); border-radius:50%; animation:spin .8s linear infinite;
+             vertical-align:-2px; margin-right:8px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .toolbar { display:flex; justify-content:space-between; align-items:center;
+             gap:10px; flex-wrap:wrap; margin:18px 0 10px; }
+  .toolbar .count { font-weight:600; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line);
+           vertical-align:top; }
+  th { color:var(--muted); font-weight:600; position:sticky; top:0; background:var(--card);
+       cursor:pointer; user-select:none; white-space:nowrap; }
+  th:hover { color:var(--fg); }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  td.desc { max-width:380px; }
+  a { color:var(--cyan); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  .tablewrap { max-height:60vh; overflow:auto; border:1px solid var(--line);
+               border-radius:12px; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>TikTok <span>Profile Videos</span> Scraper</h1>
+  <p class="sub">Nhập username (có hoặc không có @) để lấy toàn bộ video của tài khoản.</p>
+
+  <div class="panel">
+    <div class="row">
+      <input id="user" type="text" placeholder="vd: trungvu.ttv" autocomplete="off" />
+      <button id="go">Lấy video</button>
+    </div>
+    <div id="status" class="status"></div>
+  </div>
+
+  <div id="results" class="hidden">
+    <div class="toolbar">
+      <div class="count"><span id="count">0</span> video • <span id="dur"></span></div>
+      <div class="row">
+        <button class="ghost" id="dlJson">Tải JSON</button>
+        <button class="ghost" id="dlCsv">Tải CSV</button>
+      </div>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th data-k="i">#</th>
+            <th data-k="description">Mô tả</th>
+            <th data-k="views" class="num">Views</th>
+            <th data-k="likes" class="num">Likes</th>
+            <th data-k="comments" class="num">Bình luận</th>
+            <th data-k="shares" class="num">Chia sẻ</th>
+            <th data-k="posted_at">Ngày đăng</th>
+            <th>Link</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let videos = [];
+  let curUser = "";
+  let sortKey = "views", sortDir = -1;
+
+  const nf = new Intl.NumberFormat("en-US");
+  const fmtNum = (n) => nf.format(n || 0);
+  const fmtDate = (s) => s ? s.replace("T", " ").replace("Z", " UTC") : "";
+  const esc = (s) => (s || "").replace(/[&<>"]/g, c =>
+      ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+
+  async function scrape() {
+    const raw = $("user").value.trim();
+    if (!raw) { setStatus("Hãy nhập username.", true); return; }
+    curUser = raw.replace(/^@/, "");
+    $("go").disabled = true;
+    $("results").classList.add("hidden");
+    setStatus('<span class="spinner"></span>Đang lấy dữ liệu… (mất khoảng 20–40 giây)');
+    try {
+      const url = "/api/scrape?type=profile_videos&target=" + encodeURIComponent(curUser);
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.status !== "success" || !data.videos) {
+        throw new Error(data.message || (data.error && data.error.message) || "Không lấy được dữ liệu.");
+      }
+      videos = data.videos;
+      $("count").textContent = fmtNum(data.records || videos.length);
+      $("dur").textContent = "trong " + (data.duration || "");
+      setStatus("Hoàn tất ✓");
+      sortKey = "views"; sortDir = -1;
+      render();
+      $("results").classList.remove("hidden");
+    } catch (e) {
+      setStatus("Lỗi: " + e.message, true);
+    } finally {
+      $("go").disabled = false;
+    }
+  }
+
+  function render() {
+    const sorted = [...videos].sort((a, b) => {
+      let x = a[sortKey], y = b[sortKey];
+      if (typeof x === "string") { x = x || ""; y = y || ""; return x.localeCompare(y) * sortDir; }
+      return ((x || 0) - (y || 0)) * sortDir;
+    });
+    $("rows").innerHTML = sorted.map((v, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td class="desc">${esc(v.description)}</td>
+        <td class="num">${fmtNum(v.views)}</td>
+        <td class="num">${fmtNum(v.likes)}</td>
+        <td class="num">${fmtNum(v.comments)}</td>
+        <td class="num">${fmtNum(v.shares)}</td>
+        <td>${fmtDate(v.posted_at)}</td>
+        <td><a href="${esc(v.video_url)}" target="_blank">mở</a></td>
+      </tr>`).join("");
+  }
+
+  function setStatus(html, isErr) {
+    const s = $("status");
+    s.innerHTML = html;
+    s.className = "status" + (isErr ? " err" : "");
+  }
+
+  function download(filename, text, type) {
+    const blob = new Blob([text], { type });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function toCsv() {
+    const cols = ["video_id", "description", "views", "likes", "comments",
+                  "shares", "posted_at", "hashtags", "video_url"];
+    const head = cols.join(",");
+    const rows = videos.map(v => cols.map(c => {
+      let val = v[c];
+      if (Array.isArray(val)) val = val.join(" ");
+      val = String(val == null ? "" : val).replace(/"/g, '""');
+      return `"${val}"`;
+    }).join(","));
+    return [head, ...rows].join("\r\n");
+  }
+
+  $("go").onclick = scrape;
+  $("user").addEventListener("keydown", e => { if (e.key === "Enter") scrape(); });
+  $("dlJson").onclick = () =>
+    download(curUser + "_videos.json", JSON.stringify(videos, null, 2), "application/json");
+  $("dlCsv").onclick = () =>
+    download(curUser + "_videos.csv", "﻿" + toCsv(), "text/csv;charset=utf-8");
+
+  document.querySelectorAll("th[data-k]").forEach(th => {
+    if (th.dataset.k === "i") return;
+    th.onclick = () => {
+      const k = th.dataset.k;
+      if (k === sortKey) sortDir *= -1; else { sortKey = k; sortDir = -1; }
+      render();
+    };
+  });
+</script>
+</body>
+</html>

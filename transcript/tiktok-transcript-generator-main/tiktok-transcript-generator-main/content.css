@@ -1,0 +1,111 @@
+#ttg-root {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483646;
+  width: 360px;
+  max-width: calc(100vw - 24px);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+#ttg-generate-btn {
+  width: 100%;
+  border: 0;
+  border-radius: 12px;
+  background: #ff004f;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 12px 14px;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+#ttg-generate-btn:hover {
+  background: #e60046;
+}
+
+#ttg-generate-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+#ttg-panel {
+  margin-top: 10px;
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  border-radius: 12px;
+  background: rgba(18, 18, 18, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #fff;
+  padding: 12px;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+}
+
+#ttg-panel.ttg-show {
+  display: flex;
+}
+
+#ttg-panel h3 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.ttg-meta {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.ttg-status {
+  font-size: 12px;
+}
+
+.ttg-status-info {
+  color: #7cc4ff;
+}
+
+.ttg-status-success {
+  color: #75e87e;
+}
+
+.ttg-status-error {
+  color: #ff7b7b;
+}
+
+#ttg-textarea {
+  width: 100%;
+  min-height: 160px;
+  resize: vertical;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(10, 10, 10, 0.92);
+  color: #fff;
+  padding: 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  box-sizing: border-box;
+}
+
+.ttg-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.ttg-actions button {
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ttg-actions button:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
