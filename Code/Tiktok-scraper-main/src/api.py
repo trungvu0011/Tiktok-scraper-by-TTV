@@ -3,7 +3,9 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+import asyncio
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -16,6 +18,7 @@ from src.scrapers.video.video_detail import VideoDetailScraper
 from src.scrapers.transcript.scraper import TranscriptScraper
 from src.scrapers.comments.scraper import CommentsScraper
 from src.scrapers.hashtags.scraper import HashtagScraper
+from src.scrapers.social.scraper import SocialScraper
 
 log = get_logger(__name__)
 
@@ -28,6 +31,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def _restore_proactor_loop_policy() -> None:
+    # On Windows, uvicorn forces a Selector event-loop policy, but the sync
+    # Playwright scrapers (run in worker threads) need a Proactor loop to spawn
+    # the Chromium subprocess — a Selector loop raises NotImplementedError.
+    # This runs after uvicorn's loop setup, so it wins.
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 # Mount static folder for frontend
 static_dir = Path(__file__).parent.parent / "static"
@@ -96,6 +109,13 @@ def scrape_endpoint(type: str, target: str, date_from: str = "", date_to: str = 
             "has_transcript": result.get("has_transcript"),
             "method": result.get("method"),
         }
+    elif type == "social":
+        result = SocialScraper(settings).scrape(url=target)
+        payload = {
+            "media": result.get("media"),
+            "comments": result.get("comments"),
+            "comment_total": result.get("comment_total"),
+        }
     else:
         return {"status": "error", "message": "Unknown type"}
 
@@ -121,6 +141,8 @@ def scrape_endpoint(type: str, target: str, date_from: str = "", date_to: str = 
         records = payload.get("comment_count") or 0
     elif type == "transcript":
         records = len(payload.get("transcripts") or [])
+    elif type == "social":
+        records = len(payload.get("comments") or []) or 1
 
     base = {
         "status": "success",

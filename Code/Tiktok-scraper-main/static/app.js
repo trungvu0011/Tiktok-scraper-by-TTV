@@ -22,6 +22,42 @@ const weekdayIdx = (s) => { const d = new Date(s); return isNaN(d) ? -1 : (d.get
 const WD_NAMES = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
 const isVideoUrl = (u) => /\/(video|photo)\/\d+/.test(u || "");
 
+/* keyword-cloud tokenizer — drop Vietnamese/English filler + emoji + numbers */
+const STOPWORDS = new Set((
+  "và là của có không được các những một người cho này đã khi với để ở ra thì mà nên cũng " +
+  "rất lại nếu vì bị đi em anh chị mình bạn ơi nhé nha vậy gì sao thế đó đây kia nó họ tôi " +
+  "ta chúng cái con do từ theo về lên xuống vào qua tại bởi hay hoặc nhưng còn chỉ đều vẫn " +
+  "sẽ đang rồi quá lắm ừ ờ ok oke ạ à á ad ý mn thôi luôn cứ chứ chưa hơn như trên dưới giờ " +
+  "ngày làm muốn biết nói xem ai bao mới nè vl vcl trời ời mà ạ the and you for that this " +
+  "with are was its has have but not all can our your his her their"
+).split(/\s+/).filter(Boolean));
+
+function tokenize(text) {
+  const out = [];
+  const m = (text || "").toLowerCase().match(/[\p{L}\p{N}]+/gu);
+  if (m) for (const w of m) {
+    if (w.length < 2 || /^\d+$/.test(w) || STOPWORDS.has(w)) continue;
+    out.push(w);
+  }
+  return out;
+}
+
+/* social-link platforms (auto-detect) */
+const PLATFORMS = {
+  youtube:   { label: "YouTube",   color: "#ff0033" },
+  tiktok:    { label: "TikTok",    color: "#fe2c55" },
+  facebook:  { label: "Facebook",  color: "#1877f2" },
+  instagram: { label: "Instagram", color: "#e1306c" },
+};
+const detectPlatform = (u) => {
+  u = (u || "").toLowerCase();
+  if (/youtube\.com|youtu\.be/.test(u)) return "youtube";
+  if (/tiktok\.com/.test(u)) return "tiktok";
+  if (/facebook\.com|fb\.watch|fb\.com/.test(u)) return "facebook";
+  if (/instagram\.com/.test(u)) return "instagram";
+  return null;
+};
+
 async function api(type, target, extra) {
   let url = "/api/scrape?type=" + type + "&target=" + encodeURIComponent(target);
   if (extra) for (const k in extra) if (extra[k]) url += "&" + k + "=" + encodeURIComponent(extra[k]);
@@ -101,6 +137,43 @@ function SecTitle({ children, style }) {
   return html`<div className="sec-title" style=${style}>${children}</div>`;
 }
 
+/* frequency cloud — items: [{key,label,count}] sorted desc; font scales 13→30px */
+function Cloud({ items, selected, onPick, accent }) {
+  if (!items || !items.length) return html`<div className="empty">—</div>`;
+  const counts = items.map((i) => i.count);
+  const lo = Math.min(...counts), hi = Math.max(...counts);
+  const size = (c) => (hi === lo ? 17 : 13 + (c - lo) / (hi - lo) * 17);
+  return html`<div className=${"cloud" + (accent ? " " + accent : "")}>
+    ${items.map((it) => html`<span key=${it.key}
+        className=${"cw" + (selected === it.key ? " sel" : "")}
+        style=${{ fontSize: size(it.count).toFixed(1) + "px" }}
+        title=${it.label + " · " + it.count}
+        onClick=${() => onPick(it)}>
+      ${it.label}<span className="cn">${it.count}</span>
+    </span>`)}
+  </div>`;
+}
+
+/* centered popup modal — closes on overlay click, ✕, or Escape */
+function Modal({ title, badge, onClose, children }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = ""; };
+  }, []);
+  return html`<div className="modal-overlay" onClick=${onClose}>
+    <div className="modal" onClick=${(e) => e.stopPropagation()}>
+      <div className="modal-head">
+        <div className="modal-title">${title}${badge != null
+          ? html`<span className="count-pill"><b>${fmtNum(badge)}</b> video</span>` : null}</div>
+        <button className="modal-x" onClick=${onClose}>✕ Đóng</button>
+      </div>
+      <div className="modal-body">${children}</div>
+    </div>
+  </div>`;
+}
+
 /* --------------------------------------------------------------- profile */
 function ProfileCard({ p }) {
   if (!p) return null;
@@ -170,11 +243,6 @@ function Charts({ videos, chart, onPick }) {
   const avgs = wd.map((a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0));
   const maxA = Math.max(1, ...avgs);
 
-  const tags = {};
-  videos.forEach((v) => (v.hashtags || []).forEach((t) => { const k = t.toLowerCase(); tags[k] = (tags[k] || 0) + 1; }));
-  const topTags = Object.entries(tags).sort((a, b) => b[1] - a[1]).slice(0, 8);
-  const maxC = topTags.length ? topTags[0][1] : 1;
-
   const pick = (type, value, label) => onPick(
     sel.type === type && sel.value === value ? null : { type, value, label }
   );
@@ -211,20 +279,29 @@ function Charts({ videos, chart, onPick }) {
           })}
         </div>
       </div>
-      <div className="chart" style=${{ gridColumn: "1/-1" }}>
-        <div className="chart-title">Hashtag dùng nhiều nhất</div>
-        <div className="hbars">
-          ${topTags.length ? topTags.map(([t, c]) => {
-            const on = sel.type === "hashtag" && sel.value === t;
-            return html`<div className=${"hbar" + (on ? " sel" : "")} key=${t}
-                onClick=${() => pick("hashtag", t, "#" + t)}>
-              <div className="name" title=${"#" + t}>#${t}</div>
-              <div className="track"><div className="fillh" style=${{ width: c / maxC * 100 + "%" }}></div></div>
-              <div className="val">${c}</div>
-            </div>`;
-          }) : html`<div className="empty">Không có hashtag</div>`}
-        </div>
-      </div>
+    </div>
+  </section>`;
+}
+
+/* ----------------------------------------------------------- hashtag cloud */
+/* full hashtag inventory (not just the top-8 chart). Clicking reuses the same
+ * accChart drill-down as the bar chart, so it filters the video list below. */
+function HashtagCloud({ videos, chart, onPick }) {
+  const tags = useMemo(() => {
+    const m = {};
+    videos.forEach((v) => (v.hashtags || []).forEach((t) => {
+      const k = String(t).toLowerCase(); if (k) m[k] = (m[k] || 0) + 1;
+    }));
+    return Object.entries(m).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([k, c]) => ({ key: k, label: "#" + k, count: c }));
+  }, [videos]);
+  if (!tags.length) return null;
+  const sel = chart && chart.type === "hashtag" ? chart.value : null;
+  return html`<section>
+    <${SecTitle}>Danh sách hashtag <span className="chart-hint">(${tags.length} hashtag • bấm để lọc video)</span><//>
+    <div className="panel">
+      <${Cloud} items=${tags} accent="kw" selected=${sel}
+        onPick=${(it) => onPick(sel === it.key ? null : { type: "hashtag", value: it.key, label: "#" + it.key })}/>
     </div>
   </section>`;
 }
@@ -324,14 +401,40 @@ function VideoTable({ rows, sortKey, sortDir, onSort, trMap, onTranscribe }) {
   </div>`;
 }
 
+/* keyword cloud built from comment text — top 50 frequent words. */
+function KeywordCloud({ comments, selected, onPick }) {
+  const words = useMemo(() => {
+    const m = {};
+    const tally = (txt) => tokenize(txt).forEach((w) => { m[w] = (m[w] || 0) + 1; });
+    comments.forEach((c) => { tally(c.text); (c.reply_list || []).forEach((r) => tally(r.text)); });
+    let e = Object.entries(m).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    const multi = e.filter(([, c]) => c > 1);
+    e = (multi.length >= 8 ? multi : e).slice(0, 50);
+    return e.map(([k, c]) => ({ key: k, label: k, count: c }));
+  }, [comments]);
+  if (!words.length) return null;
+  return html`<div className="panel" style=${{ marginBottom: 14 }}>
+    <${SecTitle} style=${{ marginBottom: 10 }}>Từ khoá nổi bật trong bình luận
+      <span className="chart-hint">(bấm để lọc)</span><//>
+    <${Cloud} items=${words} accent="kw" selected=${selected} onPick=${(it) => onPick(it.key)}/>
+  </div>`;
+}
+
 /* ------------------------------------------------------------- comments */
 function CommentsTable({ comments }) {
   const [q, setQ] = useState("");
+  const [exp, setExp] = useState({});
   const rows = !q ? comments : comments.filter((c) =>
     (c.text || "").toLowerCase().includes(q.toLowerCase()) ||
     (c.user || "").toLowerCase().includes(q.toLowerCase()) ||
     (c.nickname || "").toLowerCase().includes(q.toLowerCase()));
+  const kwSel = q.trim().toLowerCase();
+  const pickKw = (w) => setQ((cur) => (cur.trim().toLowerCase() === w ? "" : w));
+  const toggle = (id) => setExp((s) => ({ ...s, [id]: !s[id] }));
+  const userCell = (u, nick) => html`<td><a className="open" href=${"https://www.tiktok.com/@" + u} target="_blank">@${u}</a>
+    <div style=${{ color: "var(--muted2)", fontSize: "11.5px" }}>${nick}</div></td>`;
   return html`<section>
+    <${KeywordCloud} comments=${comments} selected=${kwSel} onPick=${pickKw}/>
     <div className="toolbar">
       <div className="left">
         <${SecTitle} style=${{ margin: 0 }}>Bình luận<//>
@@ -339,7 +442,7 @@ function CommentsTable({ comments }) {
       </div>
       <div className="left">
         <div className="filter"><span className="ic">⌕</span>
-          <input value=${q} onChange=${(e) => setQ(e.target.value)} placeholder="Lọc bình luận / người dùng…"/></div>
+          <input type="text" value=${q} onChange=${(e) => setQ(e.target.value)} placeholder="Lọc bình luận / người dùng…"/></div>
         <button className="ghost" onClick=${() => download("binh_luan.json", JSON.stringify(rows, null, 2), "application/json")}>Tải JSON</button>
         <button className="ghost" onClick=${() => download("binh_luan.csv", "﻿" + csvOf(rows, ["cid", "user", "nickname", "text", "likes", "replies", "created_at"]), "text/csv;charset=utf-8")}>Tải CSV</button>
       </div>
@@ -350,15 +453,32 @@ function CommentsTable({ comments }) {
           <th className="nosort">Bình luận</th><th className="num nosort">Likes</th>
           <th className="num nosort">Trả lời</th><th className="nosort">Ngày</th></tr></thead>
         <tbody>
-          ${rows.length ? rows.map((c, i) => html`<tr key=${c.cid || i}>
-            <td className="idx">${i + 1}</td>
-            <td><a className="open" href=${"https://www.tiktok.com/@" + c.user} target="_blank">@${c.user}</a>
-              <div style=${{ color: "var(--muted2)", fontSize: "11.5px" }}>${c.nickname}</div></td>
-            <td className="ctext">${c.text}</td>
-            <td className="num">${fmtNum(c.likes)}</td>
-            <td className="num">${fmtNum(c.replies)}</td>
-            <td>${fmtDate(c.created_at)}</td>
-          </tr>`) : html`<tr><td colSpan="6" className="empty">Không có bình luận nào khớp.</td></tr>`}
+          ${rows.length ? rows.flatMap((c, i) => {
+            const reps = c.reply_list || [];
+            const open = exp[c.cid];
+            const main = html`<tr key=${c.cid || i}>
+              <td className="idx">${i + 1}</td>
+              ${userCell(c.user, c.nickname)}
+              <td className="ctext">${c.text}
+                ${reps.length ? html`<div className="reply-toggle" onClick=${() => toggle(c.cid)}>
+                  ${open ? "▾" : "▸"} ${open ? "Ẩn" : "Xem"} ${fmtNum(reps.length)} trả lời</div>` : null}</td>
+              <td className="num">${fmtNum(c.likes)}</td>
+              <td className="num">${fmtNum(c.replies)}</td>
+              <td>${fmtDate(c.created_at)}</td>
+            </tr>`;
+            if (!open || !reps.length) return [main];
+            const replyRows = reps.map((r, j) => html`<tr className="replyrow" key=${(c.cid || i) + "-" + (r.cid || j)}>
+              <td className="idx"></td>
+              <td className="reply-user"><span className="arr">↳</span><a className="open"
+                href=${"https://www.tiktok.com/@" + r.user} target="_blank">@${r.user}</a>
+                <div style=${{ color: "var(--muted2)", fontSize: "11.5px", paddingLeft: 20 }}>${r.nickname}</div></td>
+              <td className="ctext">${r.text}</td>
+              <td className="num">${fmtNum(r.likes)}</td>
+              <td className="num"></td>
+              <td>${fmtDate(r.created_at)}</td>
+            </tr>`);
+            return [main, ...replyRows];
+          }) : html`<tr><td colSpan="6" className="empty">Không có bình luận nào khớp.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -367,7 +487,6 @@ function CommentsTable({ comments }) {
 
 /* =====================================================  ACCOUNT MODE  ===== */
 function AccountMode({ st, tabs }) {
-  const drillRef = useRef(null);
   const {
     accUser, setAccUser, accWithVideos, setAccWithVideos, accAutoTr, setAccAutoTr,
     accFrom, setAccFrom, accTo, setAccTo, accVideos, accProfile, accDuration,
@@ -397,10 +516,6 @@ function AccountMode({ st, tabs }) {
     });
   }, [base, accChart]);
 
-  useEffect(() => {
-    if (accChart && drillRef.current) drillRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [accChart]);
-
   const fileName = (ext) => {
     const suffix = (accFrom || accTo) ? "_" + (accFrom || "start") + "_den_" + (accTo || "now") : "";
     return (accUser || "videos") + "_videos" + suffix + "." + ext;
@@ -411,8 +526,8 @@ function AccountMode({ st, tabs }) {
     ${tabs}
     <div id="singleInputs">
       <div className="searchrow">
-        <div className="field"><span className="at">@</span>
-          <input value=${accUser} onChange=${(e) => setAccUser(e.target.value)}
+        <div className="field" style=${{ flex: "0 1 440px" }}><span className="at">@</span>
+          <input type="text" value=${accUser} onChange=${(e) => setAccUser(e.target.value)}
             onKeyDown=${(e) => e.key === "Enter" && runAccount()}
             placeholder="vd: trungvu.ttv" autoComplete="off" spellCheck="false"/></div>
         <button onClick=${runAccount} disabled=${busy}>Phân tích</button>
@@ -445,16 +560,13 @@ function AccountMode({ st, tabs }) {
     ${accVideos.length ? html`<div>
       <${Overview} videos=${base} total=${accVideos.length}/>
       <${Charts} videos=${base} chart=${accChart} onPick=${setAccChart}/>
+      <${HashtagCloud} videos=${base} chart=${accChart} onPick=${setAccChart}/>
 
-      ${drill ? html`<section ref=${drillRef}>
-        <div className="drillbar">
-          <${SecTitle} style=${{ margin: 0 }}>Video ${accChart.label}<//>
-          <span className="count-pill"><b>${fmtNum(drill.length)}</b> video</span>
-          <button className="ghost small" onClick=${() => setAccChart(null)}>✕ Bỏ lọc biểu đồ</button>
-        </div>
+      ${drill ? html`<${Modal} title=${"Video " + accChart.label} badge=${drill.length}
+          onClose=${() => setAccChart(null)}>
         <${VideoTable} rows=${drill} sortKey=${accSortKey} sortDir=${accSortDir}
           onSort=${setSort} trMap=${accTr} onTranscribe=${transcribeOne}/>
-      </section>` : null}
+      <//>` : null}
 
       <section>
         <div className="toolbar">
@@ -465,7 +577,7 @@ function AccountMode({ st, tabs }) {
           </div>
           <div className="left">
             <div className="filter"><span className="ic">⌕</span>
-              <input value=${accFilter} onChange=${(e) => setAccFilter(e.target.value)} placeholder="Lọc theo mô tả…"/></div>
+              <input type="text" value=${accFilter} onChange=${(e) => setAccFilter(e.target.value)} placeholder="Lọc theo mô tả…"/></div>
             ${accTrBusy
               ? html`<button className="ghost" onClick=${stopBulk}>Dừng lấy transcript</button>`
               : html`<button className="ghost" onClick=${() => transcribeAll(base)}>Lấy transcript tất cả</button>`}
@@ -490,7 +602,7 @@ function VideoMode({ st, tabs }) {
     <div className="panel">
     ${tabs}
     <div className="searchrow">
-      <div className="field"><input className="nopad" value=${vidUrl}
+      <div className="field"><input type="text" className="nopad" value=${vidUrl}
         onChange=${(e) => setVidUrl(e.target.value)} onKeyDown=${(e) => e.key === "Enter" && runVideo()}
         placeholder="vd: https://www.tiktok.com/@user/video/123..." autoComplete="off" spellCheck="false"/></div>
       <button onClick=${runVideo} disabled=${busy}>Lấy dữ liệu</button>
@@ -600,7 +712,7 @@ function TranscriptMode({ st, tabs }) {
 
     ${trSub === "single" ? html`<div>
       <div className="searchrow">
-        <div className="field"><input className="nopad" value=${trUrl}
+        <div className="field"><input type="text" className="nopad" value=${trUrl}
           onChange=${(e) => setTrUrl(e.target.value)} onKeyDown=${(e) => e.key === "Enter" && runTrSingle()}
           placeholder="vd: https://www.tiktok.com/@user/video/123..." autoComplete="off" spellCheck="false"/></div>
         <button onClick=${runTrSingle} disabled=${busy}>Lấy transcript</button>
@@ -632,6 +744,75 @@ function TranscriptMode({ st, tabs }) {
     </section>` : null}
 
     ${trSub === "bulk" && trBulk.length ? html`<${BulkTable} results=${trBulk}/>` : null}
+  </div>`;
+}
+
+/* =====================================================  SOCIAL MODE  ====== */
+function PlatBadge({ platform }) {
+  const p = PLATFORMS[platform] || { label: platform || "—", color: "var(--muted)" };
+  return html`<span className="plat" style=${{ background: p.color }}>${p.label}</span>`;
+}
+
+function SocialMode({ st, tabs }) {
+  const { socUrl, setSocUrl, socMedia, socComments, runSocial, busy } = st;
+  const det = detectPlatform(socUrl);
+  const m = socMedia;
+  const x = m && m.extra ? m.extra : {};
+  return html`<div>
+    <div className="panel">
+    ${tabs}
+    <div className="searchrow">
+      <div className="field"><input type="text" className="nopad" value=${socUrl}
+        onChange=${(e) => setSocUrl(e.target.value)} onKeyDown=${(e) => e.key === "Enter" && runSocial()}
+        placeholder="Dán link YouTube / TikTok / Facebook / Instagram…" autoComplete="off" spellCheck="false"/></div>
+      <button onClick=${runSocial} disabled=${busy}>Lấy dữ liệu</button>
+    </div>
+    <div className="opts">
+      <span>Nền tảng:</span>
+      ${det ? html`<${PlatBadge} platform=${det}/>`
+        : html`<span style=${{ color: "var(--muted2)" }}>tự động nhận diện khi dán link</span>`}
+    </div>
+    <div className="note">Tự động nhận diện nền tảng và lấy dữ liệu công khai (tiêu đề, tác giả, chỉ số, mô tả).
+      <b>TikTok</b> lấy đầy đủ cả bình luận như tab “Video theo link”.
+      <span style=${{ color: "var(--muted2)" }}> YouTube / Facebook / Instagram: chỉ thông tin công khai, có thể thiếu vài chỉ số.</span></div>
+    <${Status} s=${st.status}/>
+    </div>
+
+    ${m ? html`<div>
+      <section>
+        <${SecTitle}>Thông tin nội dung<//>
+        <div className="panel"><div className="vhead">
+          ${m.thumbnail ? html`<img className="vcover" src=${m.thumbnail} referrerPolicy="no-referrer"/>` : null}
+          <div className="vmeta">
+            <div style=${{ marginBottom: 8 }}><${PlatBadge} platform=${m.platform}/></div>
+            <div className="vdesc">${m.title || "(không tiêu đề)"}</div>
+            ${m.author ? html`<div className="vsub">👤 <b>${m.author}</b>${x.author_handle ? " @" + x.author_handle : ""}${x.verified ? " ✓" : ""}${x.subscribers ? "  •  " + fmtCompact(x.subscribers) + " người đăng ký" : ""}</div>` : null}
+            ${(m.duration || m.posted_at) ? html`<div className="vsub">${m.duration ? "⏱ " + fmtSec(m.duration) : ""}${m.duration && m.posted_at ? "   •   " : ""}${m.posted_at ? "📅 " + fmtDate(m.posted_at) : ""}</div>` : null}
+            ${x.music_title ? html`<div className="vsub">🎵 ${x.music_title}</div>` : null}
+            ${x.category ? html`<div className="vsub">🏷 ${x.category}</div>` : null}
+            ${(() => {
+              const tg = (x.hashtags && x.hashtags.length) ? x.hashtags.map((t) => "#" + t) : (x.keywords || []);
+              return tg.length ? html`<div className="tags">${tg.slice(0, 12).map((t, i) => html`<span className="tag" key=${i}>${t}</span>`)}</div>` : null;
+            })()}
+            <a className="open" href=${m.url} target="_blank">Mở nội dung ↗</a>
+          </div>
+        </div></div>
+
+        <${SecTitle} style=${{ marginTop: 22 }}>Chỉ số<//>
+        <div className="cards">
+          <${Metric} k="Lượt xem" val=${m.views ? fmtCompact(m.views) : "—"} sub=${m.views ? fmtNum(m.views) : "không có"} color="var(--cyan)"/>
+          <${Metric} k="Lượt thích" val=${m.likes ? fmtCompact(m.likes) : "—"} sub=${m.likes ? fmtNum(m.likes) : "không có"} color="var(--pink)"/>
+          <${Metric} k="Bình luận" val=${m.comments ? fmtCompact(m.comments) : "—"} sub=${m.comments ? fmtNum(m.comments) : "không có"} color="var(--amber)"/>
+          <${Metric} k="Chia sẻ" val=${m.shares ? fmtCompact(m.shares) : "—"} sub=${m.shares ? fmtNum(m.shares) : "không có"} color="var(--green)"/>
+          ${x.saves ? html`<${Metric} k="Lượt lưu" val=${fmtCompact(x.saves)} sub=${fmtNum(x.saves)} color="var(--cyan)"/>` : null}
+        </div>
+
+        ${m.description ? html`<${SecTitle} style=${{ marginTop: 22 }}>Mô tả<//>
+          <div className="panel"><pre className="trinline" style=${{ maxHeight: "30vh" }}>${m.description}</pre></div>` : null}
+      </section>
+
+      ${socComments && socComments.length ? html`<${CommentsTable} comments=${socComments}/>` : null}
+    </div>` : null}
   </div>`;
 }
 
@@ -675,6 +856,12 @@ function App() {
   const [trBulk, setTrBulk] = usePersist("trBulk", []);
   const [trBusy, setTrBusy] = useState(false);
   const [trBulkBusy, setTrBulkBusy] = useState(false);
+
+  // social state
+  const [socUrl, setSocUrl] = usePersist("socUrl", "");
+  const [socMedia, setSocMedia] = usePersist("socMedia", null);
+  const [socComments, setSocComments] = usePersist("socComments", []);
+  const [socBusy, setSocBusy] = useState(false);
 
   const setSort = (k) => {
     if (k === accSortKey) setAccSortDir((d) => -d);
@@ -826,7 +1013,25 @@ function App() {
     setStatus({ text: (stopRef.current ? "Đã dừng — " : "Hoàn tất ✓ — ") + ok + "/" + out.length + " video có transcript", cls: ok ? "ok" : "err" });
   }
 
-  const busyAny = accBusy || vidBusy || trBusy || trBulkBusy || accTrBusy;
+  // -- social (multi-platform by link) --
+  async function runSocial() {
+    const url = (socUrl || "").trim();
+    if (!/^https?:\/\//i.test(url)) { setStatus({ text: "Dán link hợp lệ (YouTube, TikTok, Facebook, Instagram).", cls: "err" }); return; }
+    if (!detectPlatform(url)) { setStatus({ text: "Link không thuộc nền tảng hỗ trợ (YouTube, TikTok, Facebook, Instagram).", cls: "err" }); return; }
+    setSocBusy(true); setSocMedia(null); setSocComments([]);
+    setStatus({ text: "Đang nhận diện nền tảng & lấy dữ liệu… (TikTok ~30–60s)", busy: true });
+    try {
+      const d = await api("social", url);
+      if (d.status !== "success" || !d.media) throw new Error(d.message || (d.error && d.error.message) || "Không lấy được dữ liệu.");
+      setSocMedia(d.media); setSocComments(d.comments || []);
+      const pl = (PLATFORMS[d.media.platform] || {}).label || d.media.platform;
+      const nc = (d.comments || []).length;
+      setStatus({ text: "Hoàn tất ✓ — " + pl + (nc ? " · " + fmtNum(nc) + " bình luận" : ""), cls: "ok" });
+    } catch (e) { setStatus({ text: "Thất bại: " + e.message, cls: "err" }); }
+    finally { setSocBusy(false); }
+  }
+
+  const busyAny = accBusy || vidBusy || trBusy || trBulkBusy || accTrBusy || socBusy;
   const accSt = {
     accUser, setAccUser, accWithVideos, setAccWithVideos, accAutoTr, setAccAutoTr,
     accFrom, setAccFrom, accTo, setAccTo, accVideos, accProfile, accDuration,
@@ -835,8 +1040,9 @@ function App() {
   };
   const vidSt = { vidUrl, setVidUrl, vidWithTr, setVidWithTr, vidVideo, vidComments, vidCommentTotal, vidTr, runVideo, busy: busyAny, status };
   const trSt = { trSub, setTrSub, trUrl, setTrUrl, trSingle, trUrls, setTrUrls, trBulk, runTrSingle, runTrBulk, stopBulk, busy: busyAny, trBulkBusy, status };
+  const socSt = { socUrl, setSocUrl, socMedia, socComments, runSocial, busy: busyAny, status };
 
-  const tabs = [["single", "Tài khoản"], ["video", "Video theo link"], ["transcript", "Transcript"]];
+  const tabs = [["single", "Tài khoản"], ["video", "Video theo link"], ["transcript", "Transcript"], ["social", "Social"]];
   const tabsEl = html`<div className="modes">
     ${tabs.map(([m, label]) => html`<button key=${m} className=${"mode" + (mode === m ? " active" : "")}
       onClick=${() => setMode(m)}>${label}</button>`)}
@@ -851,6 +1057,7 @@ function App() {
     ${mode === "single" ? html`<${AccountMode} st=${accSt} tabs=${tabsEl}/>` : null}
     ${mode === "video" ? html`<${VideoMode} st=${vidSt} tabs=${tabsEl}/>` : null}
     ${mode === "transcript" ? html`<${TranscriptMode} st=${trSt} tabs=${tabsEl}/>` : null}
+    ${mode === "social" ? html`<${SocialMode} st=${socSt} tabs=${tabsEl}/>` : null}
 
     <div className="footer">TikTok Scraper • dữ liệu lấy trực tiếp từ tiktok.com</div>
   </div>`;

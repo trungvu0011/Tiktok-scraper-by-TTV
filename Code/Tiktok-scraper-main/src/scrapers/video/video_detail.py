@@ -186,13 +186,16 @@ class VideoDetailScraper(BaseScraper):
         self, page, base_url: str, aweme_id: str, max_comments: int
     ) -> List[dict]:
         query = parse_qs(urlparse(base_url).query)
-        params = {k: v[0] for k, v in query.items()}
+        base_params = {k: v[0] for k, v in query.items()}
         # Drop signature + endpoint-specific params; keep the shared web params.
         for junk in (
             "X-Bogus", "X-Gnarly", "msToken", "cursor", "count",
             "challengeID", "secUid", "id", "from_page",
+            "aweme_id", "item_id", "comment_id",
         ):
-            params.pop(junk, None)
+            base_params.pop(junk, None)
+
+        params = dict(base_params)
         params["aweme_id"] = aweme_id
         params["count"] = "20"
 
@@ -228,8 +231,72 @@ class VideoDetailScraper(BaseScraper):
 
         ordered = sorted(
             collected.values(), key=lambda c: c.get("likes", 0), reverse=True
-        )
-        return ordered[:max_comments]
+        )[:max_comments]
+
+        # Pull reply threads for the most-liked comments, bounded so we don't
+        # balloon the scrape time on videos with thousands of replies.
+        self._attach_replies(page, base_params, aweme_id, ordered)
+        return ordered
+
+    def _attach_replies(
+        self,
+        page,
+        base_params: dict,
+        aweme_id: str,
+        comments: List[dict],
+        max_total: int = 1000,
+        per_comment: int = 30,
+    ) -> None:
+        fetched = 0
+        for c in comments:
+            if fetched >= max_total:
+                break
+            if c.get("replies", 0) <= 0:
+                continue
+            replies = self._collect_replies(
+                page, base_params, aweme_id, c["cid"],
+                cap=min(per_comment, max_total - fetched),
+            )
+            if replies:
+                c["reply_list"] = replies
+                fetched += len(replies)
+
+    def _collect_replies(
+        self, page, base_params: dict, aweme_id: str, comment_id: str, cap: int
+    ) -> List[dict]:
+        params = dict(base_params)
+        params["item_id"] = aweme_id
+        params["comment_id"] = comment_id
+        params["count"] = "20"
+
+        out: dict[str, dict] = {}
+        cursor = "0"
+        seen: set[str] = set()
+        for _ in range(20):
+            if cursor in seen:
+                break
+            seen.add(cursor)
+
+            params["cursor"] = cursor
+            path = "/api/comment/list/reply/?" + urlencode(params)
+            payload = ProfileVideosScraper._fetch_in_page(page, path)
+            if not payload:
+                break
+
+            for c in payload.get("comments", []) or []:
+                parsed = self._parse_comment(c)
+                if parsed:
+                    out[parsed["cid"]] = parsed
+
+            if len(out) >= cap or not payload.get("has_more"):
+                break
+            cursor = str(payload.get("cursor", ""))
+            if not cursor or cursor == "0":
+                break
+            page.wait_for_timeout(300)
+
+        ordered = sorted(out.values(), key=lambda c: c.get("likes", 0), reverse=True)
+        return ordered[:cap]
 
     @staticmethod
     def _parse_comment(c: dict) -> Optional[dict]:
