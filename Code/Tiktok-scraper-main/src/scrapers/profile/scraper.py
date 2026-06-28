@@ -50,6 +50,7 @@ def parse_profile_from_html(html: str, username: str) -> ProfileData:
         profile_url=f"https://www.tiktok.com/@{unique_id}",
         nickname=user.get("nickname", ""),
         signature=user.get("signature", ""),
+        avatar_url=user.get("avatarLarger") or user.get("avatarMedium") or user.get("avatarThumb") or "",
         followers_count=int(stats.get("followerCount", 0)),
         following_count=int(stats.get("followingCount", 0)),
         total_likes=int(stats.get("heartCount", stats.get("heart", 0))),

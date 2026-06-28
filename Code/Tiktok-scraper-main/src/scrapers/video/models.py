@@ -11,5 +11,6 @@ class VideoData(BaseModel):
     comments: int = 0
     shares: int = 0
     views: int = 0
+    saves: int = 0
     posted_at: Optional[str] = None
     video_url: str

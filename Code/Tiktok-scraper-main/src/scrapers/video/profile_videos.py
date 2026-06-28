@@ -436,6 +436,7 @@ class ProfileVideosScraper(BaseScraper):
             comments=int(stats.get("commentCount", 0)),
             shares=int(stats.get("shareCount", 0)),
             views=int(stats.get("playCount", 0)),
+            saves=int(stats.get("collectCount", 0)),
             posted_at=posted_at,
             video_url=f"https://www.tiktok.com/@{author}/video/{video_id}",
         )
