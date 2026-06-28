@@ -291,10 +291,16 @@ function Charts({ videos, chart, onPick }) {
   const maxV = Math.max(1, ...months.map((m) => cell(m).views));
   const erOfMonth = (m) => { const o = cell(m); return o.count ? o.erSum / o.count : 0; };
   const maxER = Math.max(...months.map(erOfMonth), 0.0001);
-  // ER curve points over the bar area (viewBox 0..100), smoothed for readability
-  const erPath = smoothPath(months.map((m, i) =>
-    [+((i + 0.5) / months.length * 100).toFixed(2), +((1 - erOfMonth(m) / maxER) * 100).toFixed(2)]
-  ));
+  // ER curve over the bar area (viewBox 0..100), smoothed. Only months that
+  // actually have videos contribute a point, so empty months don't drag the
+  // line down to the baseline.
+  const erPath = smoothPath(months
+    .map((m, i) => ({ m, i }))
+    .filter(({ m }) => cell(m).count > 0)
+    .map(({ m, i }) => [
+      +((i + 0.5) / months.length * 100).toFixed(2),
+      +((1 - erOfMonth(m) / maxER) * 100).toFixed(2),
+    ]));
 
   const wd = [[], [], [], [], [], [], []];
   videos.forEach((v) => { const i = weekdayIdx(v.posted_at); if (i >= 0) wd[i].push(v.views || 0); });
@@ -681,66 +687,6 @@ function AccountMode({ st, tabs }) {
   </div>`;
 }
 
-/* =====================================================  VIDEO MODE  ======= */
-function VideoMode({ st, tabs }) {
-  const { vidUrl, setVidUrl, vidWithTr, setVidWithTr, vidVideo, vidComments,
-    vidCommentTotal, vidTr, runVideo, busy } = st;
-  const v = vidVideo;
-  const eRate = v && v.views ? (v.likes + v.comments + v.shares + v.saves) / v.views * 100 : 0;
-  return html`<div>
-    <div className="panel">
-    ${tabs}
-    <div className="searchrow">
-      <div className="field"><input type="text" className="nopad" value=${vidUrl}
-        onChange=${(e) => setVidUrl(e.target.value)} onKeyDown=${(e) => e.key === "Enter" && runVideo()}
-        placeholder="vd: https://www.tiktok.com/@user/video/123..." autoComplete="off" spellCheck="false"/></div>
-      <button onClick=${runVideo} disabled=${busy}>Lấy dữ liệu</button>
-    </div>
-    <div className="opts">
-      <label className="check"><input type="checkbox" checked=${vidWithTr}
-        onChange=${(e) => setVidWithTr(e.target.checked)}/>
-        Lấy luôn transcript của video <span style=${{ color: "var(--muted2)" }}>(thêm ~10–60s)</span></label>
-    </div>
-    <div className="note">Dán <b>link 1 video</b> để lấy đầy đủ chỉ số (view, like, share, lưu…) và bình luận
-      <span style=${{ color: "var(--muted2)" }}>(tối đa 500 bình luận nhiều like nhất).</span></div>
-    <${Status} s=${st.status}/>
-    </div>
-
-    ${v ? html`<div>
-      <section>
-        <${SecTitle}>Thông tin video<//>
-        <div className="panel"><div className="vhead">
-          ${v.cover ? html`<img className="vcover" src=${v.cover} referrerPolicy="no-referrer"/>` : null}
-          <div className="vmeta">
-            <div className="vdesc">${v.description || "(không mô tả)"}</div>
-            <div className="vsub">👤 <b>${v.author_nickname || v.author}</b> @${v.author}${v.author_verified ? " ✓" : ""}</div>
-            <div className="vsub">🎵 ${v.music_title || "—"}${v.music_author ? " · " + v.music_author : ""}</div>
-            <div className="vsub">⏱ ${v.duration ? Math.floor(v.duration / 60) + ":" + String(v.duration % 60).padStart(2, "0") : "—"}   •   📅 ${fmtDate(v.posted_at)}</div>
-            <div className="tags">${(v.hashtags || []).map((t, i) => html`<span className="tag" key=${i}>#${t}</span>`)}</div>
-            <a className="open" href=${v.video_url || "#"} target="_blank">Mở video ↗</a>
-          </div>
-        </div></div>
-        <${SecTitle} style=${{ marginTop: 22 }}>Hiệu suất<//>
-        <div className="cards">
-          <${Metric} k="Lượt xem" val=${fmtCompact(v.views)} sub=${fmtNum(v.views)} color="var(--cyan)"/>
-          <${Metric} k="Lượt thích" val=${fmtCompact(v.likes)} sub=${fmtNum(v.likes)} color="var(--pink)"/>
-          <${Metric} k="Bình luận" val=${fmtCompact(v.comments)} sub=${fmtNum(v.comments)} color="var(--amber)"/>
-          <${Metric} k="Chia sẻ" val=${fmtCompact(v.shares)} sub=${fmtNum(v.shares)} color="var(--green)"/>
-          <${Metric} k="Lượt lưu" val=${fmtCompact(v.saves)} sub=${fmtNum(v.saves)} color="var(--cyan)"/>
-          <${Metric} k="Tương tác" val=${eRate.toFixed(1) + "%"} sub="(like+cmt+share+lưu)/view" color="var(--pink)"/>
-        </div>
-      </section>
-
-      ${vidTr && vidTr.transcripts ? html`<section>
-        <${SecTitle}>Transcript <span className="chart-hint">(${vidTr.method === "whisper" ? "tự trích xuất Whisper" : "phụ đề TikTok"})</span><//>
-        <${TranscriptViewer} transcripts=${vidTr.transcripts}/>
-      </section>` : null}
-
-      <${CommentsTable} comments=${vidComments}/>
-    </div>` : null}
-  </div>`;
-}
-
 /* =====================================================  TRANSCRIPT MODE  == */
 function BulkTable({ results }) {
   const [view, setView] = useState(-1);
@@ -828,7 +774,7 @@ function TranscriptMode({ st, tabs }) {
     ${trSub === "single" && trSingle && trSingle.transcripts ? html`<section>
       <${SecTitle}>Transcript <span className="chart-hint">(${trSingle.method === "whisper" ? "tự trích xuất Whisper" : "phụ đề TikTok"})</span><//>
       ${trSingle.video ? html`<div className="panel"><div className="vhead">
-        ${trSingle.video.cover ? html`<img className="vcover" src=${trSingle.video.cover} referrerPolicy="no-referrer"/>` : null}
+        ${trSingle.video.cover ? html`<img className="vcover" src=${trSingle.video.cover} referrerPolicy="no-referrer" onError=${(e) => { e.target.style.display = "none"; }}/>` : null}
         <div className="vmeta">
           <div className="vdesc">${trSingle.video.description || "(không mô tả)"}</div>
           <div className="vsub">👤 <b>${trSingle.video.author_nickname || trSingle.video.author || ""}</b> @${trSingle.video.author || ""}</div>
@@ -841,73 +787,10 @@ function TranscriptMode({ st, tabs }) {
   </div>`;
 }
 
-/* =====================================================  SOCIAL MODE  ====== */
+/* =================================================  PLATFORM BADGE  ======= */
 function PlatBadge({ platform }) {
   const p = PLATFORMS[platform] || { label: platform || "—", color: "var(--muted)" };
   return html`<span className="plat" style=${{ background: p.color }}>${p.label}</span>`;
-}
-
-function SocialMode({ st, tabs }) {
-  const { socUrl, setSocUrl, socMedia, socComments, runSocial, busy } = st;
-  const det = detectPlatform(socUrl);
-  const m = socMedia;
-  const x = m && m.extra ? m.extra : {};
-  return html`<div>
-    <div className="panel">
-    ${tabs}
-    <div className="searchrow">
-      <div className="field"><input type="text" className="nopad" value=${socUrl}
-        onChange=${(e) => setSocUrl(e.target.value)} onKeyDown=${(e) => e.key === "Enter" && runSocial()}
-        placeholder="Dán link YouTube / TikTok / Facebook / Instagram…" autoComplete="off" spellCheck="false"/></div>
-      <button onClick=${runSocial} disabled=${busy}>Lấy dữ liệu</button>
-    </div>
-    <div className="opts">
-      <span>Nền tảng:</span>
-      ${det ? html`<${PlatBadge} platform=${det}/>`
-        : html`<span style=${{ color: "var(--muted2)" }}>tự động nhận diện khi dán link</span>`}
-    </div>
-    <div className="note">Tự động nhận diện nền tảng và lấy dữ liệu công khai (tiêu đề, tác giả, chỉ số, mô tả).
-      <b>TikTok</b> lấy đầy đủ cả bình luận như tab “Video theo link”.
-      <span style=${{ color: "var(--muted2)" }}> YouTube / Facebook / Instagram: chỉ thông tin công khai, có thể thiếu vài chỉ số.</span></div>
-    <${Status} s=${st.status}/>
-    </div>
-
-    ${m ? html`<div>
-      <section>
-        <${SecTitle}>Thông tin nội dung<//>
-        <div className="panel"><div className="vhead">
-          ${m.thumbnail ? html`<img className="vcover" src=${m.thumbnail} referrerPolicy="no-referrer"/>` : null}
-          <div className="vmeta">
-            <div style=${{ marginBottom: 8 }}><${PlatBadge} platform=${m.platform}/></div>
-            <div className="vdesc">${m.title || "(không tiêu đề)"}</div>
-            ${m.author ? html`<div className="vsub">👤 <b>${m.author}</b>${x.author_handle ? " @" + x.author_handle : ""}${x.verified ? " ✓" : ""}${x.subscribers ? "  •  " + fmtCompact(x.subscribers) + " người đăng ký" : ""}</div>` : null}
-            ${(m.duration || m.posted_at) ? html`<div className="vsub">${m.duration ? "⏱ " + fmtSec(m.duration) : ""}${m.duration && m.posted_at ? "   •   " : ""}${m.posted_at ? "📅 " + fmtDate(m.posted_at) : ""}</div>` : null}
-            ${x.music_title ? html`<div className="vsub">🎵 ${x.music_title}</div>` : null}
-            ${x.category ? html`<div className="vsub">🏷 ${x.category}</div>` : null}
-            ${(() => {
-              const tg = (x.hashtags && x.hashtags.length) ? x.hashtags.map((t) => "#" + t) : (x.keywords || []);
-              return tg.length ? html`<div className="tags">${tg.slice(0, 12).map((t, i) => html`<span className="tag" key=${i}>${t}</span>`)}</div>` : null;
-            })()}
-            <a className="open" href=${m.url} target="_blank">Mở nội dung ↗</a>
-          </div>
-        </div></div>
-
-        <${SecTitle} style=${{ marginTop: 22 }}>Chỉ số<//>
-        <div className="cards">
-          <${Metric} k="Lượt xem" val=${m.views ? fmtCompact(m.views) : "—"} sub=${m.views ? fmtNum(m.views) : "không có"} color="var(--cyan)"/>
-          <${Metric} k="Lượt thích" val=${m.likes ? fmtCompact(m.likes) : "—"} sub=${m.likes ? fmtNum(m.likes) : "không có"} color="var(--pink)"/>
-          <${Metric} k="Bình luận" val=${m.comments ? fmtCompact(m.comments) : "—"} sub=${m.comments ? fmtNum(m.comments) : "không có"} color="var(--amber)"/>
-          <${Metric} k="Chia sẻ" val=${m.shares ? fmtCompact(m.shares) : "—"} sub=${m.shares ? fmtNum(m.shares) : "không có"} color="var(--green)"/>
-          ${x.saves ? html`<${Metric} k="Lượt lưu" val=${fmtCompact(x.saves)} sub=${fmtNum(x.saves)} color="var(--cyan)"/>` : null}
-        </div>
-
-        ${m.description ? html`<${SecTitle} style=${{ marginTop: 22 }}>Mô tả<//>
-          <div className="panel"><pre className="trinline" style=${{ maxHeight: "30vh" }}>${m.description}</pre></div>` : null}
-      </section>
-
-      ${socComments && socComments.length ? html`<${CommentsTable} comments=${socComments}/>` : null}
-    </div>` : null}
-  </div>`;
 }
 
 /* =====================================================  LINK MODE  ======== */
@@ -966,7 +849,7 @@ function LinkMode({ st }) {
     ${m ? html`<div>
       <section><div className="panel">
         <div className="vhead">
-          ${m.thumbnail ? html`<img className="vcover" src=${m.thumbnail} referrerPolicy="no-referrer"/>` : null}
+          ${m.thumbnail ? html`<img className="vcover" src=${m.thumbnail} referrerPolicy="no-referrer" onError=${(e) => { e.target.style.display = "none"; }}/>` : null}
           <div className="vmeta">
             <div style=${{ marginBottom: 8 }}><${PlatBadge} platform=${m.platform}/></div>
             <div className="vdesc">${m.title || m.description || "(không tiêu đề)"}</div>
@@ -1212,15 +1095,6 @@ function App() {
   const [accTrBusy, setAccTrBusy] = useState(false);
   const [accBusy, setAccBusy] = useState(false);
 
-  // video state
-  const [vidUrl, setVidUrl] = usePersist("vidUrl", "");
-  const [vidWithTr, setVidWithTr] = usePersist("vidWithTr", false);
-  const [vidVideo, setVidVideo] = usePersist("vidVideo", null);
-  const [vidComments, setVidComments] = usePersist("vidComments", []);
-  const [vidCommentTotal, setVidCommentTotal] = usePersist("vidCommentTotal", 0);
-  const [vidTr, setVidTr] = usePersist("vidTr", null);
-  const [vidBusy, setVidBusy] = useState(false);
-
   // transcript state
   const [trSub, setTrSub] = usePersist("trSub", "single");
   const [trUrl, setTrUrl] = usePersist("trUrl", "");
@@ -1229,12 +1103,6 @@ function App() {
   const [trBulk, setTrBulk] = usePersist("trBulk", []);
   const [trBusy, setTrBusy] = useState(false);
   const [trBulkBusy, setTrBulkBusy] = useState(false);
-
-  // social state
-  const [socUrl, setSocUrl] = usePersist("socUrl", "");
-  const [socMedia, setSocMedia] = usePersist("socMedia", null);
-  const [socComments, setSocComments] = usePersist("socComments", []);
-  const [socBusy, setSocBusy] = useState(false);
 
   // link state (merged video + social)
   const [linkUrl, setLinkUrl] = usePersist("linkUrl", "");
@@ -1340,35 +1208,6 @@ function App() {
     setStatus({ text: (stopRef.current ? "Đã dừng — " : "Hoàn tất ✓ — ") + "lấy transcript " + ok + "/" + targets.length + " video", cls: "ok" });
   }
 
-  // -- video --
-  async function runVideo() {
-    const url = (vidUrl || "").trim();
-    if (!isVideoUrl(url)) { setStatus({ text: "Dán link 1 video TikTok hợp lệ (…/video/123…).", cls: "err" }); return; }
-    setVidBusy(true); setVidTr(null);
-    setStatus({ text: "Đang lấy dữ liệu video & bình luận… (~30–60 giây)", busy: true });
-    try {
-      const d = await api("video_detail", url);
-      if (d.status !== "success" || !d.video || !d.video.video_id)
-        throw new Error(d.message || (d.error && d.error.message) || "Không lấy được dữ liệu video.");
-      setVidVideo(d.video); setVidComments(d.comments || []); setVidCommentTotal(d.comment_total || 0);
-      setStatus({ text: "Hoàn tất ✓ — " + fmtNum((d.comments || []).length) + " bình luận", cls: "ok" });
-      if (vidWithTr) {
-        setStatus({ text: "Đã lấy video & bình luận ✓ — đang lấy transcript…", busy: true });
-        try {
-          const r = await fetchTr(url);
-          if (r.ok) {
-            setVidTr({ transcripts: r.transcripts, method: r.method });
-            setStatus({ text: "Hoàn tất ✓ — video, bình luận và transcript (" + (r.method === "whisper" ? "Whisper" : "phụ đề TikTok") + ")", cls: "ok" });
-          } else {
-            setStatus({ text: "Hoàn tất ✓ — video & bình luận. Video này không có transcript.", cls: "ok" });
-          }
-        } catch (e) { setStatus({ text: "Hoàn tất ✓ — video & bình luận. (Transcript lỗi: " + e.message + ")", cls: "ok" }); }
-      }
-    } catch (e) {
-      setStatus({ text: "Thất bại: " + e.message, cls: "err" });
-    } finally { setVidBusy(false); }
-  }
-
   // -- transcript single / bulk --
   async function runTrSingle() {
     const url = (trUrl || "").trim();
@@ -1408,24 +1247,6 @@ function App() {
     const ok = out.filter((r) => !r.error).length;
     setStatus({ text: (stopRef.current ? "Đã dừng — " : "Hoàn tất ✓ — ") + ok + "/" + out.length + " video có transcript", cls: ok ? "ok" : "err" });
     if (out.length) pushJob({ type: "transcript", target: out.length + " video", label: out.length + " video · batch", count: ok, status: ok ? "success" : "error" });
-  }
-
-  // -- social (multi-platform by link) --
-  async function runSocial() {
-    const url = (socUrl || "").trim();
-    if (!/^https?:\/\//i.test(url)) { setStatus({ text: "Dán link hợp lệ (YouTube, TikTok, Facebook, Instagram).", cls: "err" }); return; }
-    if (!detectPlatform(url)) { setStatus({ text: "Link không thuộc nền tảng hỗ trợ (YouTube, TikTok, Facebook, Instagram).", cls: "err" }); return; }
-    setSocBusy(true); setSocMedia(null); setSocComments([]);
-    setStatus({ text: "Đang nhận diện nền tảng & lấy dữ liệu… (TikTok ~30–60s)", busy: true });
-    try {
-      const d = await api("social", url);
-      if (d.status !== "success" || !d.media) throw new Error(d.message || (d.error && d.error.message) || "Không lấy được dữ liệu.");
-      setSocMedia(d.media); setSocComments(d.comments || []);
-      const pl = (PLATFORMS[d.media.platform] || {}).label || d.media.platform;
-      const nc = (d.comments || []).length;
-      setStatus({ text: "Hoàn tất ✓ — " + pl + (nc ? " · " + fmtNum(nc) + " bình luận" : ""), cls: "ok" });
-    } catch (e) { setStatus({ text: "Thất bại: " + e.message, cls: "err" }); }
-    finally { setSocBusy(false); }
   }
 
   // -- link (merged): TikTok video → rich video_detail; else → social --
@@ -1487,7 +1308,7 @@ function App() {
     finally { setLinkTrBusy(false); }
   }
 
-  const busyAny = accBusy || vidBusy || trBusy || trBulkBusy || accTrBusy || socBusy || linkBusy || linkTrBusy;
+  const busyAny = accBusy || trBusy || trBulkBusy || accTrBusy || linkBusy || linkTrBusy;
   const accSt = {
     accUser, setAccUser, accWithVideos, setAccWithVideos, accAutoTr, setAccAutoTr,
     accFrom, setAccFrom, accTo, setAccTo, accVideos, accProfile, accDuration,
@@ -1495,9 +1316,7 @@ function App() {
     accChart, setAccChart, accTr, runAccount, transcribeOne, transcribeAll, stopBulk,
     busy: busyAny, accTrBusy, status,
   };
-  const vidSt = { vidUrl, setVidUrl, vidWithTr, setVidWithTr, vidVideo, vidComments, vidCommentTotal, vidTr, runVideo, busy: busyAny, status };
   const trSt = { trSub, setTrSub, trUrl, setTrUrl, trSingle, trUrls, setTrUrls, trBulk, runTrSingle, runTrBulk, stopBulk, busy: busyAny, trBulkBusy, status };
-  const socSt = { socUrl, setSocUrl, socMedia, socComments, runSocial, busy: busyAny, status };
   const linkSt = { linkUrl, setLinkUrl, linkMedia, linkComments, linkTr, linkTab, setLinkTab,
     runLink, fetchLinkTr, busy: busyAny, linkTrBusy, status };
 
