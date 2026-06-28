@@ -204,6 +204,9 @@ function Modal({ title, badge, onClose, children }) {
 
 /* --------------------------------------------------------------- profile */
 function ProfileCard({ p, duration, videoCount }) {
+  // TikTok avatar CDN often blocks hotlinking → fall back to initials on error.
+  const [avatarOk, setAvatarOk] = useState(true);
+  useEffect(() => setAvatarOk(true), [p && p.avatar_url]);
   if (!p) return null;
   const name = p.nickname || p.username || "";
   const initials = name.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || "?";
@@ -211,8 +214,9 @@ function ProfileCard({ p, duration, videoCount }) {
   return html`<section>
     <div className="panel">
       <div className="profile">
-        ${p.avatar_url
-          ? html`<img className="pf-av pf-avimg" src=${p.avatar_url} referrerPolicy="no-referrer" alt=${name}/>`
+        ${p.avatar_url && avatarOk
+          ? html`<img className="pf-av pf-avimg" src=${p.avatar_url} referrerPolicy="no-referrer" alt=${name}
+              onError=${() => setAvatarOk(false)}/>`
           : html`<div className="pf-av">${initials}</div>`}
         <div className="pf-main">
           <div className="pf-name">
