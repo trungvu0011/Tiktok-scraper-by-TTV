@@ -24,3 +24,11 @@ Thumbs.db
 Data scraped/
 **/output/
 .gstack/
+
+# --- Automation layer SQLite DB (regenerable, per-machine state) ---
+scraper.db
+scraper.db-wal
+scraper.db-shm
+**/scraper.db
+**/scraper.db-wal
+**/scraper.db-shm

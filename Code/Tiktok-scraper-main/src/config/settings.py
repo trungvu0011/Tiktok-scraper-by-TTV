@@ -22,6 +22,10 @@ class Settings(BaseModel):
     retries: int = Field(default=3, ge=0, le=10)
     output_dir: str = Field(default="output")
 
+    # SQLite file backing the automation layer (jobs, schedules, snapshots,
+    # alerts, notifications). Relative paths resolve against the package root.
+    db_path: str = Field(default="scraper.db")
+
     http_proxy: Optional[str] = None
     https_proxy: Optional[str] = None
 

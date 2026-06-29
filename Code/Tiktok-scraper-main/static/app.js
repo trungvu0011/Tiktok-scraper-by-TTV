@@ -34,6 +34,7 @@ const JOB_TYPES = {
 };
 const er = (v) => (v.views ? (v.likes + v.comments + v.shares) / v.views * 100 : 0);
 const erColor = (x) => (x >= 10 ? "var(--green)" : x >= 5 ? "var(--amber)" : "var(--muted)");
+const erBg = (x) => (x >= 10 ? "rgba(23,178,106,.12)" : x >= 5 ? "rgba(245,158,11,.14)" : "var(--input)");
 const weekdayIdx = (s) => { const d = new Date(s); return isNaN(d) ? -1 : (d.getUTCDay() + 6) % 7; };
 const WD_NAMES = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
 const isVideoUrl = (u) => /\/(video|photo)\/\d+/.test(u || "");
@@ -175,7 +176,7 @@ function Cloud({ items, selected, onPick, accent }) {
     ${items.map((it) => html`<span key=${it.key}
         className=${"cw" + (selected === it.key ? " sel" : "")}
         style=${{ fontSize: size(it.count).toFixed(1) + "px" }}
-        title=${it.label + " · " + it.count}
+        data-tip=${it.label + " · " + it.count + " video"}
         onClick=${() => onPick(it)}>
       ${it.label}<span className="cn">${it.count}</span>
     </span>`)}
@@ -266,6 +267,34 @@ function Overview({ videos, total, profile }) {
 }
 
 /* ----------------------------------------------------------------- charts */
+/* dual-handle zoom/range bar under the month chart — drag either end to focus
+ * on a time window (or pan by dragging both). Shows a mini view-bars preview. */
+function ZoomBar({ months, byMonth, lo, hi, onChange }) {
+  const n = months.length;
+  const views = months.map((m) => (byMonth[m] || {}).views || 0);
+  const maxV = Math.max(1, ...views);
+  const fmtM = (i) => { const p = months[i].split("-"); return p[1] + "/" + p[0].slice(2); };
+  const full = lo === 0 && hi === n - 1;
+  return html`<div className="zoomwrap">
+    <div className="zoombar">
+      <div className="zb-track">
+        ${views.map((v, i) => html`<div key=${i} className=${"zb-b" + (i >= lo && i <= hi ? " in" : "")}
+          style=${{ left: (i / n * 100) + "%", width: (100 / n) + "%", height: Math.max(6, v / maxV * 100) + "%" }}></div>`)}
+        <div className="zb-sel" style=${{ left: (lo / (n - 1) * 100) + "%", right: (100 - hi / (n - 1) * 100) + "%" }}></div>
+      </div>
+      <input type="range" min="0" max=${n - 1} value=${lo} className="zb-range"
+        onChange=${(e) => onChange([Math.min(+e.target.value, hi - 1), hi])} aria-label="Từ tháng"/>
+      <input type="range" min="0" max=${n - 1} value=${hi} className="zb-range"
+        onChange=${(e) => onChange([lo, Math.max(+e.target.value, lo + 1)])} aria-label="Đến tháng"/>
+    </div>
+    <div className="zb-foot">
+      <span>${fmtM(lo)} → ${fmtM(hi)} · ${hi - lo + 1} tháng</span>
+      ${full ? html`<span className="chart-hint">kéo 2 đầu để phóng to khoảng thời gian</span>`
+             : html`<button className="linkbtn" onClick=${() => onChange(null)}>Xem tất cả ↺</button>`}
+    </div>
+  </div>`;
+}
+
 function Charts({ videos, chart, onPick }) {
   const sel = chart || {};
   const byMonth = {};
@@ -287,20 +316,29 @@ function Charts({ videos, chart, onPick }) {
       if (++mo > 12) { mo = 1; y++; }
     }
   }
+
+  // zoom window over the month axis (null = whole range); reset when data changes
+  const [zoom, setZoom] = useState(null);
+  useEffect(() => { setZoom(null); }, [months.length]);
+  const lo = zoom ? Math.max(0, zoom[0]) : 0;
+  const hi = zoom ? Math.min(months.length - 1, zoom[1]) : Math.max(0, months.length - 1);
+  const visMonths = months.slice(lo, hi + 1);
+
   const cell = (m) => byMonth[m] || { views: 0, count: 0, erSum: 0 };
-  const maxV = Math.max(1, ...months.map((m) => cell(m).views));
+  const maxV = Math.max(1, ...visMonths.map((m) => cell(m).views));
   const erOfMonth = (m) => { const o = cell(m); return o.count ? o.erSum / o.count : 0; };
-  const maxER = Math.max(...months.map(erOfMonth), 0.0001);
-  // ER curve over the bar area (viewBox 0..100), smoothed. Only months that
-  // actually have videos contribute a point, so empty months don't drag the
-  // line down to the baseline.
-  const erPath = smoothPath(months
+  const maxER = Math.max(...visMonths.map(erOfMonth), 0.0001);
+  // ER curve over the visible bar area (viewBox 0..100), smoothed. Only months
+  // that actually have videos contribute a point, so empty months don't drag
+  // the line down to the baseline.
+  const erPath = smoothPath(visMonths
     .map((m, i) => ({ m, i }))
     .filter(({ m }) => cell(m).count > 0)
     .map(({ m, i }) => [
-      +((i + 0.5) / months.length * 100).toFixed(2),
+      +((i + 0.5) / visMonths.length * 100).toFixed(2),
       +((1 - erOfMonth(m) / maxER) * 100).toFixed(2),
     ]));
+  const labelEvery = Math.max(1, Math.ceil(visMonths.length / 16));
 
   const wd = [[], [], [], [], [], [], []];
   videos.forEach((v) => { const i = weekdayIdx(v.posted_at); if (i >= 0) wd[i].push(v.views || 0); });
@@ -317,33 +355,34 @@ function Charts({ videos, chart, onPick }) {
       <div className="chart">
         <div className="chart-title">Lượt xem theo tháng <span className="chart-hint">· <span style=${{ color: "var(--blue)" }}>━</span> tỉ lệ tương tác</span></div>
         <div className="plot">
-          <div className="vbars noscroll">
-            ${months.length ? months.map((m) => {
+          <div className="vbars noscroll fit">
+            ${visMonths.length ? visMonths.map((m, i) => {
               const o = cell(m), h = o.views / maxV * 100, parts = m.split("-");
               const on = sel.type === "month" && sel.value === m;
               const peak = o.views === maxV && maxV > 0;
               return html`<div className=${"vbar" + (on ? " sel" : "")} key=${m}
-                  title=${m + ": " + fmtNum(o.views) + " views · " + o.count + " video · ER " + erOfMonth(m).toFixed(1) + "%"}
+                  data-tip=${"Tháng " + parts[1] + "/" + parts[0] + "\n" + fmtNum(o.views) + " lượt xem\n" + o.count + " video · ER " + erOfMonth(m).toFixed(1) + "%"}
                   onClick=${() => pick("month", m, "tháng " + parts[1] + "/" + parts[0])}>
                 <div className="fill" style=${{ height: h + "%", background: peak ? "var(--pink2)" : null }}></div>
-                <div className="lbl">${parts[1] + "/" + parts[0].slice(2)}</div>
+                <div className="lbl">${i % labelEvery === 0 ? parts[1] + "/" + parts[0].slice(2) : ""}</div>
               </div>`;
             }) : html`<div className="empty">—</div>`}
           </div>
-          ${months.length > 1 ? html`<svg className="erline" viewBox="0 0 100 100" preserveAspectRatio="none">
+          ${visMonths.length > 1 ? html`<svg className="erline" viewBox="0 0 100 100" preserveAspectRatio="none">
             <path d=${erPath} fill="none" stroke="var(--blue)" strokeWidth="1.6"
               vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round"/>
           </svg>` : null}
         </div>
+        ${months.length > 6 ? html`<${ZoomBar} months=${months} byMonth=${byMonth} lo=${lo} hi=${hi} onChange=${setZoom}/>` : null}
       </div>
       <div className="chart">
         <div className="chart-title">View trung bình theo thứ (ngày đăng)</div>
-        <div className="vbars">
+        <div className="vbars noscroll">
           ${avgs.map((a, i) => {
             const on = sel.type === "weekday" && sel.value === i;
             const peak = a === maxA && maxA > 0;
             return html`<div className=${"vbar" + (on ? " sel" : "")} key=${i}
-                title=${WD_NAMES[i] + ": " + fmtNum(a) + " views TB • " + wd[i].length + " video"}
+                data-tip=${WD_NAMES[i] + "\n" + fmtNum(a) + " view TB · " + wd[i].length + " video"}
                 onClick=${() => pick("weekday", i, "đăng " + WD_NAMES[i])}>
               <div className="fill" style=${{ height: a / maxA * 100 + "%", background: peak ? "var(--pink2)" : null }}></div>
               <div className="lbl">${WD_NAMES[i]}</div>
@@ -359,6 +398,9 @@ function Charts({ videos, chart, onPick }) {
 /* full hashtag inventory (not just the top-8 chart). Clicking reuses the same
  * accChart drill-down as the bar chart, so it filters the video list below. */
 function HashtagCloud({ videos, chart, onPick }) {
+  // collapsed by default — many accounts have hundreds of hashtags and it ate
+  // the whole screen; show the top handful and let the user expand on demand.
+  const [open, setOpen] = useState(false);
   const tags = useMemo(() => {
     const m = {};
     videos.forEach((v) => (v.hashtags || []).forEach((t) => {
@@ -369,11 +411,20 @@ function HashtagCloud({ videos, chart, onPick }) {
   }, [videos]);
   if (!tags.length) return null;
   const sel = chart && chart.type === "hashtag" ? chart.value : null;
+  const PREVIEW = 12;
+  const shown = open ? tags : tags.slice(0, PREVIEW);
+  const hidden = tags.length - shown.length;
   return html`<section>
-    <${SecTitle}>Danh sách hashtag <span className="chart-hint">(${tags.length} hashtag • bấm để lọc video)</span><//>
+    <div className="sec-row">
+      <${SecTitle} style=${{ margin: 0 }}>Danh sách hashtag <span className="chart-hint">(${tags.length} hashtag • bấm để lọc video)</span><//>
+      ${tags.length > PREVIEW ? html`<button className="linkbtn" onClick=${() => setOpen((o) => !o)}>
+        ${open ? "Thu gọn ▲" : "Mở rộng tất cả ▼"}</button>` : null}
+    </div>
     <div className="panel">
-      <${Cloud} items=${tags} accent="kw" selected=${sel}
+      <${Cloud} items=${shown} accent="kw" selected=${sel}
         onPick=${(it) => onPick(sel === it.key ? null : { type: "hashtag", value: it.key, label: "#" + it.key })}/>
+      ${!open && hidden > 0 ? html`<button className="more-tags" onClick=${() => setOpen(true)}>
+        +${fmtNum(hidden)} hashtag nữa →</button>` : null}
     </div>
   </section>`;
 }
@@ -438,8 +489,8 @@ function VideoTable({ rows, sortKey, sortDir, onSort, trMap, onTranscribe }) {
             const open = exp[v.video_id];
             const tags = (v.hashtags || []).slice(0, 6);
             return html`<${React.Fragment} key=${v.video_id || i}>
-              <tr>
-                <td className="idx">${i + 1}</td>
+              <tr className="vtr">
+                <td className="idx"><span className=${"rank" + (i < 3 ? " top" : "")}>${i + 1}</span></td>
                 <td className="desc">
                   <div className="vrow">
                     <a className="vthumb" href=${v.video_url} target="_blank" title="Mở video">
@@ -452,13 +503,13 @@ function VideoTable({ rows, sortKey, sortDir, onSort, trMap, onTranscribe }) {
                     </div>
                   </div>
                 </td>
-                <td className="num">${fmtNum(v.views)}</td>
+                <td className="num vviews">${fmtNum(v.views)}</td>
                 <td className="num">${fmtNum(v.likes)}</td>
                 <td className="num">${fmtNum(v.comments)}</td>
                 <td className="num">${fmtNum(v.shares)}</td>
                 <td className="num">${fmtNum(v.saves)}</td>
-                <td className="num"><span className="er" style=${{ color: erColor(e) }}>${e.toFixed(1)}%</span></td>
-                <td>${fmtDate(v.posted_at)}</td>
+                <td className="num"><span className="er" style=${{ color: erColor(e), background: erBg(e) }}>${e.toFixed(1)}%</span></td>
+                <td className="vdate">${fmtDate(v.posted_at)}</td>
                 <td><a className="open" href=${v.video_url} target="_blank">mở ↗</a></td>
                 <td>
                   <div className="rowbtns">
@@ -581,6 +632,13 @@ function AccountMode({ st, tabs }) {
     accChart, setAccChart, accTr, runAccount, transcribeOne, transcribeAll, stopBulk, busy, accTrBusy,
   } = st;
 
+  // Collapse the input panel once there's a result — after analysing, the search
+  // form just adds clutter. Re-opens when a new scrape lands new data, and the
+  // user can reopen it manually to analyse another account.
+  const [inputOpen, setInputOpen] = useState(!(accProfile || accVideos.length));
+  useEffect(() => { if (accProfile || accVideos.length) setInputOpen(false); },
+    [accProfile, accVideos.length]);
+
   // The date range (from/to) doubles as a client-side filter on already-scraped
   // videos AND, on the next "Phân tích", drives the backend early-stop scrape.
   const base = useMemo(() => accVideos.filter((v) => {
@@ -611,9 +669,9 @@ function AccountMode({ st, tabs }) {
   };
 
   return html`<div>
-    <div className="panel">
+    <div className=${"panel" + (inputOpen ? "" : " slim")}>
     ${tabs}
-    <div id="singleInputs">
+    ${inputOpen ? html`<div id="singleInputs">
       <div className="searchrow">
         <div className="field" style=${{ flex: "0 1 440px" }}><span className="at">@</span>
           <input type="text" value=${accUser} onChange=${(e) => setAccUser(e.target.value)}
@@ -640,8 +698,12 @@ function AccountMode({ st, tabs }) {
         nhẹ và nhanh hơn nhiều (bỏ qua, dừng sớm khi vượt mốc). Để trống = lấy tất cả.
         Mỗi video có nút <b>Transcript</b> riêng; hoặc tick ô tự lấy transcript hàng loạt.
       </div>
-    </div>
-    <${Status} s=${st.status}/>
+    </div>` : html`<div className="input-collapsed">
+      <div className="ic-info"><span className="ic-badge">@</span>
+        <span>Đang xem <b>@${accUser || (accProfile && accProfile.username) || ""}</b>${accVideos.length ? " · " + fmtNum(accVideos.length) + " video" : ""}</span></div>
+      <button className="ghost small" onClick=${() => setInputOpen(true)}>Phân tích tài khoản khác</button>
+    </div>`}
+    ${st.status && (st.status.text || st.status.busy) ? html`<${Status} s=${st.status}/>` : null}
     </div>
 
     <${ProfileCard} p=${accProfile} duration=${accDuration} videoCount=${accVideos.length}/>
@@ -909,6 +971,10 @@ const ICON = {
   link: html`<svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round"><path d="M9 15l6-6M10.5 6.5l1-1a4 4 0 0 1 6 6l-1 1M13.5 17.5l-1 1a4 4 0 0 1-6-6l1-1"/></svg>`,
   text: html`<svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round"><path d="M4 6h16M4 11h16M4 16h10"/></svg>`,
   history: html`<svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 4v4h4"/><path d="M12 8v4l3 2"/></svg>`,
+  queue: html`<svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/><circle cx="19" cy="17" r="2"/></svg>`,
+  clock: html`<svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4M12 13v3l2 1"/></svg>`,
+  target: html`<svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>`,
+  alert: html`<svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>`,
 };
 
 function Sidebar({ mode, setMode, histCount }) {
@@ -935,6 +1001,11 @@ function Sidebar({ mode, setMode, histCount }) {
     <nav className="nav scrl">
       <div className="nav-label">CÔNG CỤ</div>
       ${tools.map(item)}
+      <div className="nav-label">TỰ ĐỘNG HÓA</div>
+      ${item({ id: "competitors", label: "Đối thủ", icon: ICON.target })}
+      ${item({ id: "schedules", label: "Lịch định kỳ", icon: ICON.clock })}
+      ${item({ id: "alerts", label: "Cảnh báo", icon: ICON.alert })}
+      ${item({ id: "jobs", label: "Hàng đợi", icon: ICON.queue })}
       <div className="nav-label">DỮ LIỆU</div>
       ${item({ id: "history", label: "Lịch sử", icon: ICON.history, hint: histCount ? String(histCount) : "" })}
     </nav>
@@ -945,11 +1016,20 @@ function Sidebar({ mode, setMode, histCount }) {
   </aside>`;
 }
 
-function Topbar({ title, subtitle, onQuick }) {
+function Topbar({ title, subtitle, onQuick, onBack, onFwd, canBack, canFwd }) {
+  const chev = (d) => html`<svg viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d=${d === "l" ? "M15 18l-6-6 6-6" : "M9 18l6-6-6-6"}/></svg>`;
   return html`<div className="topbar">
-    <div><div className="tb-title">${title}</div><div className="tb-sub">${subtitle}</div></div>
+    <div className="tb-left">
+      <div className="navbtns">
+        <button className="navbtn" disabled=${!canBack} onClick=${onBack} title="Quay lại">${chev("l")}</button>
+        <button className="navbtn" disabled=${!canFwd} onClick=${onFwd} title="Tiến tới">${chev("r")}</button>
+      </div>
+      <div><div className="tb-title">${title}</div><div className="tb-sub">${subtitle}</div></div>
+    </div>
     <div className="tb-right">
       <span className="tb-badge"><span className="dotlive"></span>Dữ liệu trực tiếp</span>
+      <${NotificationBell}/>
       <button className="btn-dark" onClick=${onQuick}>+ Quét nhanh</button>
     </div>
   </div>`;
@@ -1072,9 +1152,492 @@ function HistoryScreen({ history, onOpen }) {
   </div>`;
 }
 
+/* ====================================================  AUTOMATION  ======== */
+/* REST helpers for the server-backed automation layer (jobs/schedules/
+ * competitors/alerts/notifications). Distinct from the `api()` scrape helper. */
+async function jget(path) { const r = await fetch(path); return r.json(); }
+async function jsend(method, path, body) {
+  const r = await fetch(path, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return r.json();
+}
+const jpost = (p, b) => jsend("POST", p, b);
+const jpatch = (p, b) => jsend("PATCH", p, b);
+const jdel = (p) => jsend("DELETE", p);
+
+/* poll `fn` on mount and every `ms`; auto-stops on unmount */
+function usePoll(fn, ms, deps) {
+  useEffect(() => {
+    let alive = true;
+    const tick = () => { if (alive) fn(); };
+    tick();
+    const id = setInterval(tick, ms);
+    return () => { alive = false; clearInterval(id); };
+  }, deps || []);
+}
+
+/* scrape types selectable when enqueuing / scheduling a job */
+const SCRAPE_TYPES = [
+  ["profile_videos", "Tài khoản + video"],
+  ["profile", "Chỉ hồ sơ"],
+  ["video_detail", "Video (chi tiết)"],
+  ["transcript", "Transcript"],
+  ["social", "Link đa nền tảng"],
+];
+const scrapeTypeLabel = (t) => (SCRAPE_TYPES.find((x) => x[0] === t) || [t, t])[1];
+
+const JOB_STATUS = {
+  queued: { label: "Chờ", cls: "st-queued" },
+  running: { label: "Đang chạy", cls: "st-running" },
+  success: { label: "Thành công", cls: "st-success" },
+  error: { label: "Lỗi", cls: "st-error" },
+  canceled: { label: "Đã hủy", cls: "st-canceled" },
+};
+function StatusPill({ status }) {
+  const s = JOB_STATUS[status] || { label: status, cls: "" };
+  return html`<span className=${"stpill " + s.cls}>
+    ${status === "running" ? html`<${Spinner}/>` : null}${s.label}
+  </span>`;
+}
+
+const intervalLabel = (min) => {
+  min = min || 0;
+  if (min % 1440 === 0) return (min / 1440) + " ngày";
+  if (min % 60 === 0) return (min / 60) + " giờ";
+  return min + " phút";
+};
+
+/* ---------- notification bell (always mounted in the topbar) ---------- */
+function NotificationBell() {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState([]);
+  const [unread, setUnread] = useState(0);
+  const load = async () => {
+    try { const d = await jget("/api/notifications?limit=30");
+      setItems(d.notifications || []); setUnread(d.unread || 0); } catch (_) {}
+  };
+  usePoll(load, 30000, []);
+  const markAll = async () => { await jpost("/api/notifications/read-all"); load(); };
+  const onClick = async (n) => {
+    if (!n.is_read) { await jpost("/api/notifications/" + n.id + "/read"); load(); }
+  };
+  const LV = { info: "var(--blue)", warn: "var(--amber)", success: "var(--green)" };
+  return html`<div className="bell-wrap">
+    <button className="bell" onClick=${() => { setOpen((o) => !o); if (!open) load(); }} title="Thông báo">
+      <svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+      ${unread ? html`<span className="bell-badge">${unread > 99 ? "99+" : unread}</span>` : null}
+    </button>
+    ${open ? html`<div className="bell-pop">
+      <div className="bell-head">
+        <b>Thông báo</b>
+        ${unread ? html`<button className="linkbtn" onClick=${markAll}>Đánh dấu đã đọc</button>` : null}
+      </div>
+      <div className="bell-list scrl">
+        ${items.length ? items.map((n) => html`<div key=${n.id}
+            className=${"bell-item" + (n.is_read ? "" : " unread")} onClick=${() => onClick(n)}>
+          <span className="bell-dot" style=${{ background: LV[n.level] || "var(--muted)" }}></span>
+          <div className="bell-main">
+            <div className="bell-title">${n.title}</div>
+            ${n.body ? html`<div className="bell-body">${n.body}</div>` : null}
+            <div className="bell-time">${fmtAgo(new Date(n.created_at).getTime())}</div>
+          </div>
+        </div>`) : html`<div className="empty" style=${{ padding: 22 }}>Chưa có thông báo.</div>`}
+      </div>
+    </div>` : null}
+  </div>`;
+}
+
+/* ---------- jobs / queue screen ---------- */
+function JobsScreen({ onOpenInView }) {
+  const [jobs, setJobs] = useState([]);
+  const [ jtype, setJtype ] = usePersist("jq_type", "profile_videos");
+  const [target, setTarget] = usePersist("jq_target", "");
+  const [detail, setDetail] = useState(null);
+  const [msg, setMsg] = useState("");
+  const load = async () => { try { const d = await jget("/api/jobs?limit=60"); setJobs(d.jobs || []); } catch (_) {} };
+  usePoll(load, 3000, []);
+  const add = async () => {
+    const t = (target || "").trim();
+    if (!t) { setMsg("Nhập mục tiêu (username / link)."); return; }
+    setMsg("");
+    await jpost("/api/jobs", { type: jtype, target: t });
+    setTarget(""); load();
+  };
+  const cancel = async (id) => { await jpost("/api/jobs/" + id + "/cancel"); load(); };
+  // Account scrapes open in the full analysis view; others show a JSON modal.
+  const openDetail = async (job) => {
+    if (job.status !== "success") { const d = await jget("/api/jobs/" + job.id); setDetail(d); return; }
+    const d = onOpenInView ? await onOpenInView(job) : await jget("/api/jobs/" + job.id);
+    if (d) setDetail(d);
+  };
+  return html`<div style=${{ animation: "fadeIn .3s ease both" }}>
+    <div className="panel" style=${{ marginBottom: 18 }}>
+      <div className="card-h" style=${{ marginBottom: 12 }}>Thêm job vào hàng đợi</div>
+      <div className="searchrow">
+        <select className="tselect" value=${jtype} onChange=${(e) => setJtype(e.target.value)}
+          style=${{ padding: "13px 12px", minWidth: 180 }}>
+          ${SCRAPE_TYPES.map(([v, l]) => html`<option key=${v} value=${v}>${l}</option>`)}
+        </select>
+        <div className="field"><span className="at">›</span>
+          <input type="text" placeholder="username hoặc link…" value=${target}
+            onChange=${(e) => setTarget(e.target.value)}
+            onKeyDown=${(e) => e.key === "Enter" && add()}/>
+        </div>
+        <button onClick=${add}>+ Thêm job</button>
+      </div>
+      ${msg ? html`<div className="status err">${msg}</div>` : null}
+      <div className="note">Job chạy nền, lần lượt từng cái (scraper dùng trình duyệt thật nên không chạy song song). Bạn có thể rời trang.</div>
+    </div>
+
+    <div className="tablewrap" style=${{ maxHeight: "none" }}><table>
+      <thead><tr><th className="nosort">Mục tiêu</th><th className="nosort">Loại</th>
+        <th className="nosort">Nguồn</th><th className="num nosort">Bản ghi</th>
+        <th className="nosort">Thời lượng</th><th className="nosort">Tạo lúc</th>
+        <th className="nosort">Trạng thái</th><th className="nosort"></th></tr></thead>
+      <tbody>
+        ${jobs.length ? jobs.map((j) => html`<tr key=${j.id}>
+          <td><b style=${{ cursor: "pointer" }} onClick=${() => openDetail(j)}>${(j.target || "").slice(0, 60)}</b></td>
+          <td className="hsub">${scrapeTypeLabel(j.type)}</td>
+          <td className="hsub">${j.source === "schedule" ? "Lịch" : "Thủ công"}</td>
+          <td className="num">${j.records != null ? fmtNum(j.records) : "—"}</td>
+          <td className="hsub">${j.duration_s != null ? j.duration_s.toFixed(1) + "s" : "—"}</td>
+          <td className="hsub">${fmtAgo(new Date(j.created_at).getTime())}</td>
+          <td><${StatusPill} status=${j.status}/></td>
+          <td>${j.status === "queued"
+            ? html`<button className="ghost small" onClick=${() => cancel(j.id)}>Hủy</button>`
+            : html`<button className="ghost small" onClick=${() => openDetail(j)}>Xem</button>`}</td>
+        </tr>`) : html`<tr><td colSpan="8"><div className="empty">Chưa có job nào. Thêm một job phía trên.</div></td></tr>`}
+      </tbody>
+    </table></div>
+
+    ${detail ? html`<div className="modal-overlay" onClick=${() => setDetail(null)}>
+      <div className="modal" onClick=${(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <div className="modal-title">Job · ${scrapeTypeLabel(detail.type)} · ${(detail.target || "").slice(0, 50)}
+            <${StatusPill} status=${detail.status}/></div>
+          <button className="modal-x" onClick=${() => setDetail(null)}>Đóng</button>
+        </div>
+        <div className="modal-body">
+          ${detail.error ? html`<div className="status err" style=${{ marginTop: 0 }}>${detail.error}</div>` : null}
+          <pre className="json">${JSON.stringify(detail.result || detail, null, 2)}</pre>
+        </div>
+      </div>
+    </div>` : null}
+  </div>`;
+}
+
+/* ---------- schedules screen ---------- */
+function SchedulesScreen() {
+  const [rows, setRows] = useState([]);
+  const [jtype, setJtype] = useState("profile_videos");
+  const [target, setTarget] = useState("");
+  const [num, setNum] = useState(1);
+  const [unit, setUnit] = useState(1440); // minutes-per-unit (day)
+  const [msg, setMsg] = useState("");
+  const load = async () => { try { const d = await jget("/api/schedules"); setRows(d.schedules || []); } catch (_) {} };
+  usePoll(load, 8000, []);
+  const add = async () => {
+    const t = (target || "").trim();
+    if (!t) { setMsg("Nhập mục tiêu."); return; }
+    setMsg("");
+    await jpost("/api/schedules", { job_type: jtype, target: t, interval_minutes: Math.max(1, num * unit) });
+    setTarget(""); load();
+  };
+  const toggle = async (r) => { await jpatch("/api/schedules/" + r.id, { enabled: !r.enabled }); load(); };
+  const del = async (id) => { await jdel("/api/schedules/" + id); load(); };
+  return html`<div style=${{ animation: "fadeIn .3s ease both" }}>
+    <div className="panel" style=${{ marginBottom: 18 }}>
+      <div className="card-h" style=${{ marginBottom: 12 }}>Tạo lịch chạy định kỳ</div>
+      <div className="searchrow">
+        <select className="tselect" value=${jtype} onChange=${(e) => setJtype(e.target.value)} style=${{ padding: "13px 12px", minWidth: 170 }}>
+          ${SCRAPE_TYPES.map(([v, l]) => html`<option key=${v} value=${v}>${l}</option>`)}
+        </select>
+        <div className="field"><span className="at">›</span>
+          <input type="text" placeholder="username hoặc link…" value=${target} onChange=${(e) => setTarget(e.target.value)}/>
+        </div>
+        <span className="hsub">mỗi</span>
+        <input type="text" value=${num} onChange=${(e) => setNum(Math.max(1, parseInt(e.target.value) || 1))}
+          className="nopad" style=${{ width: 64, flex: "none" }}/>
+        <select className="tselect" value=${unit} onChange=${(e) => setUnit(parseInt(e.target.value))} style=${{ padding: "13px 12px" }}>
+          <option value="60">giờ</option><option value="1440">ngày</option><option value="10080">tuần</option>
+        </select>
+        <button onClick=${add}>+ Tạo lịch</button>
+      </div>
+      ${msg ? html`<div className="status err">${msg}</div>` : null}
+      <div className="note">Lịch chỉ chạy khi server đang bật. Mỗi lần đến hạn sẽ tự thêm một job vào hàng đợi.</div>
+    </div>
+
+    <div className="tablewrap" style=${{ maxHeight: "none" }}><table>
+      <thead><tr><th className="nosort">Mục tiêu</th><th className="nosort">Loại</th>
+        <th className="nosort">Chu kỳ</th><th className="nosort">Lần chạy cuối</th>
+        <th className="nosort">Lần kế tiếp</th><th className="nosort">Bật</th><th className="nosort"></th></tr></thead>
+      <tbody>
+        ${rows.length ? rows.map((r) => html`<tr key=${r.id}>
+          <td><b>${(r.target || "").slice(0, 50)}</b></td>
+          <td className="hsub">${scrapeTypeLabel(r.job_type)}</td>
+          <td className="hsub">${intervalLabel(r.interval_minutes)}</td>
+          <td className="hsub">${r.last_run_at ? fmtAgo(new Date(r.last_run_at).getTime()) : "—"}</td>
+          <td className="hsub">${r.next_run_at ? new Date(r.next_run_at).toLocaleString("vi-VN") : "—"}</td>
+          <td><button className=${"toggle" + (r.enabled ? " on" : "")} onClick=${() => toggle(r)}><span></span></button></td>
+          <td><button className="ghost small" onClick=${() => del(r.id)}>Xóa</button></td>
+        </tr>`) : html`<tr><td colSpan="7"><div className="empty">Chưa có lịch nào.</div></td></tr>`}
+      </tbody>
+    </table></div>
+  </div>`;
+}
+
+/* ---------- competitor benchmarking ---------- */
+const COMPARE_METRICS = [
+  ["followers", "Follower"],
+  ["avg_views", "View TB / video"],
+  ["avg_er", "ER TB (%)"],
+  ["total_likes", "Tổng lượt thích"],
+];
+function TrendChart({ series, names, colorOf, metric }) {
+  const W = 680, H = 220, padL = 50, padR = 14, padT = 14, padB = 26;
+  const pts = {}; const allV = []; const allT = [];
+  names.forEach((u) => {
+    pts[u] = (series[u] || []).filter((p) => p[metric] != null)
+      .map((p) => ({ t: new Date(p.captured_at).getTime(), v: p[metric] }));
+    pts[u].forEach((p) => { allV.push(p.v); allT.push(p.t); });
+  });
+  if (!allV.length) return html`<div className="empty">Chưa đủ dữ liệu để vẽ — chờ thêm lần quét.</div>`;
+  let maxV = Math.max(...allV), minV = Math.min(...allV);
+  if (maxV === minV) { maxV += 1; minV -= 1; }
+  const t0 = Math.min(...allT), t1 = Math.max(...allT), tr = (t1 - t0) || 1;
+  const x = (t) => padL + (W - padL - padR) * ((t - t0) / tr);
+  const y = (v) => padT + (H - padT - padB) * (1 - (v - minV) / (maxV - minV));
+  const gy = [0, 0.25, 0.5, 0.75, 1].map((f) => minV + (maxV - minV) * (1 - f));
+  return html`<svg viewBox=${"0 0 " + W + " " + H} style=${{ width: "100%", height: "auto" }}>
+    ${gy.map((gv, i) => { const yy = padT + (H - padT - padB) * (i / 4);
+      return html`<g key=${i}><line x1=${padL} y1=${yy} x2=${W - padR} y2=${yy} stroke="var(--line)"/>
+        <text x=${padL - 6} y=${yy + 3} textAnchor="end" fontSize="10" fill="var(--muted2)" fontFamily="var(--mono)">${fmtCompact(gv)}</text></g>`; })}
+    ${names.map((u) => {
+      const p = pts[u]; if (!p.length) return null;
+      const col = colorOf(u);
+      const coords = p.map((d) => [x(d.t), y(d.v)]);
+      const path = coords.length > 1 ? smoothPath(coords) : "";
+      return html`<g key=${u}>
+        ${path ? html`<path d=${path} fill="none" stroke=${col} strokeWidth="2"/>` : null}
+        ${coords.map((c, i) => html`<circle key=${i} cx=${c[0]} cy=${c[1]} r="2.8" fill=${col}/>`)}
+      </g>`;
+    })}
+  </svg>`;
+}
+function CompetitorsScreen({ onOpen, pushJob }) {
+  const [list, setList] = useState([]);
+  const [sel, setSel] = usePersist("cmp_sel", []);
+  const [uname, setUname] = useState("");
+  const [metric, setMetric] = usePersist("cmp_metric", "followers");
+  const [cmp, setCmp] = useState(null);
+  const [msg, setMsg] = useState("");
+  // remembers the last scrape (captured_at) we logged to history per competitor,
+  // so each completed scrape lands in "Lịch sử" exactly once.
+  const [logged, setLogged] = usePersist("cmp_logged", {});
+  const load = async () => { try { const d = await jget("/api/competitors"); setList(d.competitors || []); } catch (_) {} };
+  usePoll(load, 6000, []);
+  // when a competitor's snapshot timestamp changes, a scrape just finished —
+  // record it in history (as an "account" job) just like a manual account scrape.
+  useEffect(() => {
+    if (!pushJob || !list.length) return;
+    list.forEach((c) => {
+      const cap = c.latest && c.latest.captured_at;
+      if (cap && logged[c.username] !== cap) {
+        pushJob({ type: "account", source: "competitor", username: c.username,
+          target: "@" + c.username, label: (c.nickname || c.username) + " · đối thủ",
+          count: (c.latest && c.latest.video_count) || 0, status: "success" });
+        setLogged((m) => ({ ...m, [c.username]: cap }));
+      }
+    });
+  }, [list]);
+  const colorOf = (u) => (list.find((c) => c.username === u) || {}).color || "var(--ink)";
+  const nameOf = (u) => { const c = list.find((x) => x.username === u); return c && (c.nickname || c.username) || u; };
+  const selected = sel.filter((u) => list.some((c) => c.username === u));
+  useEffect(() => {
+    if (!selected.length) { setCmp(null); return; }
+    jget("/api/competitors/compare?usernames=" + encodeURIComponent(selected.join(","))).then(setCmp).catch(() => {});
+  }, [sel.join(","), list.length]);
+  const add = async () => {
+    const u = (uname || "").trim().replace(/^@/, "");
+    if (!u) { setMsg("Nhập @username TikTok."); return; }
+    setMsg("Đang thêm & quét lần đầu…");
+    await jpost("/api/competitors", { username: u, schedule: true, interval_minutes: 1440 });
+    setUname(""); setMsg(""); load();
+  };
+  const del = async (id) => { await jdel("/api/competitors/" + id); load(); };
+  const toggleSel = (u) => setSel((s) => s.includes(u) ? s.filter((x) => x !== u) : [...s, u]);
+  return html`<div style=${{ animation: "fadeIn .3s ease both" }}>
+    <div className="panel" style=${{ marginBottom: 18 }}>
+      <div className="card-h" style=${{ marginBottom: 12 }}>Thêm đối thủ theo dõi</div>
+      <div className="searchrow">
+        <div className="field"><span className="at">@</span>
+          <input type="text" placeholder="username TikTok…" value=${uname}
+            onChange=${(e) => setUname(e.target.value)} onKeyDown=${(e) => e.key === "Enter" && add()}/>
+        </div>
+        <button onClick=${add}>+ Thêm & quét</button>
+      </div>
+      ${msg ? html`<div className=${"status" + (msg.includes("Nhập") ? " err" : "")}>${msg}</div>` : null}
+      <div className="note">Thêm đối thủ sẽ quét ngay 1 lần và tạo lịch theo dõi hằng ngày. Chọn nhiều thẻ để so sánh.</div>
+    </div>
+
+    ${list.length ? html`<div className="cmp-grid">
+      ${list.map((c) => {
+        const s = c.latest || {};
+        const on = selected.includes(c.username);
+        const name = c.nickname || c.username;
+        const initials = name.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+        return html`<div key=${c.id} className=${"cmp-card" + (on ? " sel" : "")} onClick=${() => toggleSel(c.username)}>
+          <div className="cmp-top">
+            <span className="cmp-av" style=${{ background: c.color }}>${initials}</span>
+            <div className="cmp-id">
+              <div className="cmp-name">${name}</div>
+              <div className="hsub">@${c.username}</div>
+            </div>
+            <span className=${"cmp-check" + (on ? " on" : "")}>${on ? "✓" : ""}</span>
+          </div>
+          <div className="cmp-metrics">
+            <div><b>${s.followers != null ? fmtCompact(s.followers) : "—"}</b><span>Follower</span></div>
+            <div><b>${s.avg_er != null ? s.avg_er.toFixed(1) + "%" : "—"}</b><span>ER TB</span></div>
+            <div><b>${s.video_count != null ? fmtNum(s.video_count) : "—"}</b><span>Video</span></div>
+          </div>
+          <div className="cmp-foot">
+            <span className="hsub">${s.captured_at ? "Cập nhật " + fmtAgo(new Date(s.captured_at).getTime()) : "Đang chờ quét…"}</span>
+            <div style=${{ display: "flex", gap: 6 }}>
+              <button className="ghost small" disabled=${!s.captured_at}
+                onClick=${(e) => { e.stopPropagation(); onOpen && onOpen(c.username); }}>Chi tiết</button>
+              <button className="ghost small" onClick=${(e) => { e.stopPropagation(); del(c.id); }}>Xóa</button>
+            </div>
+          </div>
+        </div>`;
+      })}
+    </div>` : html`<div className="panel"><div className="empty">Chưa theo dõi đối thủ nào. Thêm @username phía trên để bắt đầu.</div></div>`}
+
+    ${selected.length ? html`<div className="panel" style=${{ marginTop: 18 }}>
+      <div className="card-head" style=${{ marginBottom: 14 }}>
+        <div className="card-h">So sánh tăng trưởng · ${selected.length} đối thủ</div>
+        <div className="modes" style=${{ margin: 0 }}>
+          ${COMPARE_METRICS.map(([v, l]) => html`<button key=${v}
+            className=${"mode" + (metric === v ? " active" : "")} onClick=${() => setMetric(v)}>${l}</button>`)}
+        </div>
+      </div>
+      <div className="cmp-legend">
+        ${selected.map((u) => html`<span key=${u} className="leg"><span className="leg-dot" style=${{ background: colorOf(u) }}></span>${nameOf(u)}</span>`)}
+      </div>
+      ${cmp ? html`<${TrendChart} series=${cmp.series} names=${selected} colorOf=${colorOf} metric=${metric}/>` : html`<div className="empty">Đang tải…</div>`}
+      ${cmp ? html`<div className="tablewrap" style=${{ marginTop: 14, maxHeight: "none" }}><table>
+        <thead><tr><th className="nosort">Đối thủ</th><th className="num nosort">Follower</th>
+          <th className="num nosort">View TB</th><th className="num nosort">ER TB</th>
+          <th className="num nosort">Video</th><th className="num nosort">Tổng like</th></tr></thead>
+        <tbody>
+          ${selected.map((u) => { const s = (cmp.latest && cmp.latest[u]) || {}; return html`<tr key=${u}>
+            <td><span className="leg-dot" style=${{ background: colorOf(u), display: "inline-block", marginRight: 8 }}></span><b>${nameOf(u)}</b></td>
+            <td className="num">${s.followers != null ? fmtNum(s.followers) : "—"}</td>
+            <td className="num">${s.avg_views != null ? fmtNum(s.avg_views) : "—"}</td>
+            <td className="num">${s.avg_er != null ? s.avg_er.toFixed(2) + "%" : "—"}</td>
+            <td className="num">${s.video_count != null ? fmtNum(s.video_count) : "—"}</td>
+            <td className="num">${s.total_likes != null ? fmtNum(s.total_likes) : "—"}</td>
+          </tr>`; })}
+        </tbody>
+      </table></div>` : null}
+    </div>` : null}
+  </div>`;
+}
+
+/* ---------- alerts screen ---------- */
+const ALERT_METRICS = [
+  ["new_video", "Đăng video mới", false],
+  ["video_views", "Video vượt mốc view", true],
+  ["followers", "Follower", true],
+  ["total_likes", "Tổng lượt thích", true],
+  ["video_count", "Số video", true],
+  ["avg_er", "ER trung bình (%)", true],
+  ["avg_views", "View trung bình", true],
+];
+const ALERT_OPS = [["gt", "vượt trên"], ["lt", "xuống dưới"], ["change_pct_gt", "biến động % vượt"]];
+function AlertsScreen() {
+  const [rows, setRows] = useState([]);
+  const [scope, setScope] = useState("");
+  const [metric, setMetric] = useState("new_video");
+  const [op, setOp] = useState("gt");
+  const [thr, setThr] = useState("");
+  const [msg, setMsg] = useState("");
+  const needsThreshold = (ALERT_METRICS.find((m) => m[0] === metric) || [])[2];
+  const load = async () => { try { const d = await jget("/api/alerts"); setRows(d.alerts || []); } catch (_) {} };
+  usePoll(load, 10000, []);
+  const add = async () => {
+    if (needsThreshold && metric !== "new_video" && (thr === "" || isNaN(parseFloat(thr)))) {
+      setMsg("Nhập ngưỡng (số)."); return;
+    }
+    setMsg("");
+    await jpost("/api/alerts", {
+      metric, operator: metric === "new_video" ? "gt" : op,
+      threshold: needsThreshold ? parseFloat(thr) : null,
+      scope_username: (scope || "").trim().replace(/^@/, "") || null,
+    });
+    setThr(""); load();
+  };
+  const toggle = async (r) => { await jpatch("/api/alerts/" + r.id, { enabled: !r.enabled }); load(); };
+  const del = async (id) => { await jdel("/api/alerts/" + id); load(); };
+  const mLabel = (m) => (ALERT_METRICS.find((x) => x[0] === m) || [m, m])[1];
+  const oLabel = (o) => (ALERT_OPS.find((x) => x[0] === o) || [o, o])[1];
+  return html`<div style=${{ animation: "fadeIn .3s ease both" }}>
+    <div className="panel" style=${{ marginBottom: 18 }}>
+      <div className="card-h" style=${{ marginBottom: 12 }}>Tạo luật cảnh báo</div>
+      <div className="searchrow">
+        <div className="field" style=${{ minWidth: 160 }}><span className="at">@</span>
+          <input type="text" placeholder="đối thủ (trống = tất cả)" value=${scope} onChange=${(e) => setScope(e.target.value)}/>
+        </div>
+        <select className="tselect" value=${metric} onChange=${(e) => setMetric(e.target.value)} style=${{ padding: "13px 12px", minWidth: 180 }}>
+          ${ALERT_METRICS.map(([v, l]) => html`<option key=${v} value=${v}>${l}</option>`)}
+        </select>
+        ${needsThreshold && metric !== "video_views" ? html`<select className="tselect" value=${op} onChange=${(e) => setOp(e.target.value)} style=${{ padding: "13px 12px" }}>
+          ${ALERT_OPS.map(([v, l]) => html`<option key=${v} value=${v}>${l}</option>`)}
+        </select>` : null}
+        ${needsThreshold ? html`<input type="text" placeholder=${metric === "video_views" ? "số view (vd 1000000)" : "ngưỡng"} value=${thr}
+          onChange=${(e) => setThr(e.target.value)} className="nopad" style=${{ maxWidth: 200 }}/>` : null}
+        <button onClick=${add}>+ Tạo cảnh báo</button>
+      </div>
+      ${msg ? html`<div className="status err">${msg}</div>` : null}
+      <div className="note">Cảnh báo được kiểm tra sau mỗi lần quét một đối thủ đang theo dõi; khi khớp sẽ hiện ở chuông 🔔 phía trên.</div>
+    </div>
+
+    <div className="tablewrap" style=${{ maxHeight: "none" }}><table>
+      <thead><tr><th className="nosort">Phạm vi</th><th className="nosort">Điều kiện</th>
+        <th className="nosort">Bật</th><th className="nosort"></th></tr></thead>
+      <tbody>
+        ${rows.length ? rows.map((r) => html`<tr key=${r.id}>
+          <td><b>${r.scope_username ? "@" + r.scope_username : "Tất cả"}</b></td>
+          <td className="hsub">${mLabel(r.metric)}${r.metric !== "new_video"
+            ? " · " + oLabel(r.operator) + (r.threshold != null ? " " + fmtCompact(r.threshold) + (r.operator === "change_pct_gt" ? "%" : "") : "") : ""}</td>
+          <td><button className=${"toggle" + (r.enabled ? " on" : "")} onClick=${() => toggle(r)}><span></span></button></td>
+          <td><button className="ghost small" onClick=${() => del(r.id)}>Xóa</button></td>
+        </tr>`) : html`<tr><td colSpan="4"><div className="empty">Chưa có luật cảnh báo nào.</div></td></tr>`}
+      </tbody>
+    </table></div>
+  </div>`;
+}
+
 /* ===========================================================  APP  ======= */
 function App() {
-  const [mode, setMode] = usePersist("mode", "overview");
+  const [mode, setModeRaw] = usePersist("mode", "overview");
+  // Lightweight back/forward history over the route modes (browser-like nav).
+  const navRef = useRef({ stack: [mode], idx: 0 });
+  const [nav, setNav] = useState({ back: false, fwd: false });
+  const syncNav = () => { const n = navRef.current; setNav({ back: n.idx > 0, fwd: n.idx < n.stack.length - 1 }); };
+  const setMode = (m) => {
+    if (!m) return;
+    const n = navRef.current;
+    if (m === n.stack[n.idx]) { setModeRaw(m); return; }
+    n.stack = n.stack.slice(0, n.idx + 1); n.stack.push(m); n.idx = n.stack.length - 1;
+    if (n.stack.length > 50) { n.stack.shift(); n.idx--; }
+    setModeRaw(m); syncNav();
+  };
+  const goBack = () => { const n = navRef.current; if (n.idx > 0) { n.idx--; setModeRaw(n.stack[n.idx]); syncNav(); } };
+  const goFwd = () => { const n = navRef.current; if (n.idx < n.stack.length - 1) { n.idx++; setModeRaw(n.stack[n.idx]); syncNav(); } };
   const [status, setStatus] = useState({ text: "", cls: "", busy: false });
   const stopRef = useRef(false);
 
@@ -1327,6 +1890,10 @@ function App() {
     single: ["Phân tích tài khoản", "Hồ sơ, chỉ số, biểu đồ & toàn bộ video"],
     link: ["Quét theo link", "Tự nhận diện nền tảng · chỉ số + bình luận + transcript"],
     transcript: ["Transcript", "Phụ đề TikTok hoặc Whisper · 1 video hoặc hàng loạt"],
+    competitors: ["Đối thủ", "Theo dõi & so sánh tăng trưởng nhiều tài khoản TikTok"],
+    schedules: ["Lịch định kỳ", "Tự động quét lại theo chu kỳ khi server đang bật"],
+    alerts: ["Cảnh báo", "Luật cảnh báo — báo ngay ở chuông khi ngưỡng bị vượt"],
+    jobs: ["Hàng đợi", "Các job chạy nền (thủ công + theo lịch)"],
     history: ["Lịch sử", "Tất cả các lần thu thập đã chạy"],
   };
   let m = mode === "video" || mode === "social" ? "link" : mode;
@@ -1334,8 +1901,47 @@ function App() {
   const [title, subtitle] = SCREENS[m];
   const goQuick = () => setMode("single");
 
+  // Drop a stored scrape result (profile + videos) into the rich account view,
+  // no re-scrape. Shared by competitor "Chi tiết" and the job queue "Xem".
+  const openScrapeResult = (res, fallbackUser) => {
+    const uname = (res && res.profile && res.profile.username) || fallbackUser || "";
+    setAccUser((uname || "").replace(/^@/, "")); setAccChart(null);
+    setAccProfile((res && res.profile) || null);
+    setAccVideos((res && res.videos) || []);
+    setAccDuration((res && res.duration) || "");
+    setStatus({ text: "Đã mở kết quả ✓ — " + fmtNum(((res && res.videos) || []).length) + " video", cls: "ok" });
+    setMode("single");
+  };
+
+  // Load a competitor's latest stored scrape (the worker already ran it).
+  async function loadCompetitorView(username) {
+    username = (username || "").replace(/^@/, "");
+    setAccUser(username); setAccChart(null); setMode("single");
+    setStatus({ text: "Đang tải dữ liệu đối thủ @" + username + "…", busy: true });
+    try {
+      const res = await jget("/api/competitors/result?username=" + encodeURIComponent(username));
+      if (!res || !res.profile) throw new Error("Chưa có dữ liệu — đối thủ có thể đang được quét, thử lại sau.");
+      openScrapeResult(res, username);
+    } catch (e) {
+      setStatus({ text: e.message, cls: "err" });
+    }
+  }
+
+  // "Xem" a finished job: account scrapes open in the rich view; everything else
+  // falls back to a JSON detail modal (handled inside JobsScreen).
+  async function openJobInView(job) {
+    const d = await jget("/api/jobs/" + job.id);
+    const res = d && d.result;
+    if ((job.type === "profile_videos" || job.type === "profile") && res && res.profile) {
+      openScrapeResult(res, job.target);
+      return null; // handled — no modal
+    }
+    return d; // let JobsScreen show the JSON modal
+  }
+
   // "Mở chi tiết" from history/overview — restore the input and jump to its tool.
   const openJob = (r) => {
+    if (r.source === "competitor" && r.username) { loadCompetitorView(r.username); return; }
     if (r.type === "account") { setAccUser((r.target || "").replace(/^@/, "")); setMode("single"); }
     else if (r.type === "transcript") { if (/^https?:/.test(r.target)) setTrUrl(r.target); setMode("transcript"); }
     else { setLinkUrl(r.target); setMode("link"); }
@@ -1344,13 +1950,18 @@ function App() {
   return html`<div className="app">
     <${Sidebar} mode=${m} setMode=${setMode} histCount=${history.length}/>
     <div className="main">
-      <${Topbar} title=${title} subtitle=${subtitle} onQuick=${goQuick}/>
+      <${Topbar} title=${title} subtitle=${subtitle} onQuick=${goQuick}
+        onBack=${goBack} onFwd=${goFwd} canBack=${nav.back} canFwd=${nav.fwd}/>
       <div className="content"><div className="content-inner">
         ${m === "overview" ? html`<${HomeOverview} setMode=${setMode} onOpen=${openJob}
           history=${history} profile=${accProfile} videos=${accVideos}/>` : null}
         ${m === "single" ? html`<${AccountMode} st=${accSt} tabs=${null}/>` : null}
         ${m === "link" ? html`<${LinkMode} st=${linkSt}/>` : null}
         ${m === "transcript" ? html`<${TranscriptMode} st=${trSt} tabs=${null}/>` : null}
+        ${m === "competitors" ? html`<${CompetitorsScreen} onOpen=${loadCompetitorView} pushJob=${pushJob}/>` : null}
+        ${m === "schedules" ? html`<${SchedulesScreen}/>` : null}
+        ${m === "alerts" ? html`<${AlertsScreen}/>` : null}
+        ${m === "jobs" ? html`<${JobsScreen} onOpenInView=${openJobInView}/>` : null}
         ${m === "history" ? html`<${HistoryScreen} history=${history} onOpen=${openJob}/>` : null}
       </div></div>
     </div>
