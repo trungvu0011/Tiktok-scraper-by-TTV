@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Scrape online · TikTok profile (HTTP)</title>
+<style>
+  :root{
+    --bg:#eef0f3;--bg2:#fff;--card:#fff;--line:#ececee;--line2:#f0f0f1;
+    --fg:#16181d;--muted:#8b9096;--muted2:#aab0b7;--pink:#fe2c55;--pink2:#F02C56;
+    --blue:#2f6df6;--green:#17b26a;--ink:#16181d;
+    --shadow:0 1px 3px rgba(16,24,40,.06),0 1px 2px rgba(16,24,40,.04);
+    --shadow2:0 8px 30px rgba(16,24,40,.10);
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    --sans:'Hanken Grotesk',-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}html,body{margin:0;padding:0}
+  body{font-family:var(--sans);background:var(--bg);color:var(--fg);min-height:100vh;
+       -webkit-font-smoothing:antialiased}
+  .wrap{max-width:840px;margin:0 auto;padding:40px 20px 60px}
+  .head{display:flex;align-items:center;gap:13px;margin-bottom:6px}
+  .logo{width:42px;height:42px;border-radius:11px;background:var(--ink);display:grid;
+        place-items:center;flex:none}
+  .logo svg{width:20px;height:20px;stroke:#fff;fill:none}
+  h1{font-size:23px;font-weight:800;letter-spacing:-.02em;margin:0}
+  .badge{display:inline-block;margin-left:8px;font-size:11px;font-weight:800;color:var(--blue);
+         background:#eef3ff;border:1px solid #d6e2ff;padding:3px 9px;border-radius:7px;
+         font-family:var(--mono);vertical-align:middle}
+  .sub{color:var(--muted);font-size:14px;margin:4px 0 24px;line-height:1.5}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;
+         box-shadow:var(--shadow)}
+  .row{display:flex;gap:10px;flex-wrap:wrap}
+  .field{position:relative;flex:1;min-width:240px}
+  .field .at{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:var(--muted);
+             font-family:var(--mono)}
+  input{width:100%;padding:14px 15px 14px 30px;font-size:15px;border-radius:11px;
+        border:1.5px solid var(--line);background:var(--bg2);color:var(--fg);outline:none;
+        font-family:inherit;transition:.15s}
+  input:focus{border-color:var(--ink);box-shadow:0 0 0 3px rgba(22,24,29,.06)}
+  button{padding:14px 24px;font-size:15px;font-weight:700;border:none;border-radius:11px;
+         cursor:pointer;color:#fff;background:var(--pink2);font-family:inherit;transition:.15s}
+  button:hover{filter:brightness(1.07);transform:translateY(-1px)}
+  button:disabled{opacity:.5;cursor:not-allowed;transform:none;filter:none}
+  .note{margin-top:13px;color:var(--muted);font-size:12.5px;line-height:1.55}
+  .note code{font-family:var(--mono);background:#f4f4f6;padding:1px 6px;border-radius:5px}
+  .status{margin-top:14px;font-size:14px;min-height:20px}
+  .status.err{color:#d92d4b}.status.ok{color:var(--green)}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);
+        border-top-color:var(--pink2);border-radius:50%;animation:s .8s linear infinite;
+        vertical-align:-2px;margin-right:8px}
+  @keyframes s{to{transform:rotate(360deg)}}
+  .profile{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;margin-top:20px}
+  .av{width:62px;height:62px;border-radius:50%;flex:none;background:var(--ink);color:#fff;
+      display:grid;place-items:center;font-size:21px;font-weight:800;object-fit:cover}
+  .pmain{flex:1;min-width:240px}
+  .pname{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .pname h2{margin:0;font-size:22px}
+  .verif{width:18px;height:18px}
+  .puser{color:var(--muted);font-size:14px;margin-top:2px;font-family:var(--mono)}
+  .puser a{color:var(--muted);text-decoration:none}.puser a:hover{color:var(--fg)}
+  .pbio{color:var(--muted);font-size:14px;margin-top:10px;white-space:pre-wrap;line-height:1.5;max-width:560px}
+  .cards{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-top:18px}
+  .metric{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 15px}
+  .metric.acc{background:var(--ink);border-color:var(--ink);color:#fff}
+  .metric .k{color:var(--muted);font-size:12.5px}.metric.acc .k{color:#9aa0a7}
+  .metric .v{font-size:23px;font-weight:800;margin-top:6px;font-family:var(--mono)}
+  .metric .s{color:var(--muted2);font-size:12px;margin-top:3px;font-family:var(--mono)}
+  .foot{text-align:center;color:var(--muted2);font-size:12px;margin-top:34px;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div class="logo"><svg viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 0 0 .5-8.97A6 6 0 0 0 6.34 9.5 4 4 0 0 0 7 17.5"/><path d="M12 12v6M9.5 15.5 12 18l2.5-2.5"/></svg></div>
+    <h1>Scrape online <span class="badge">HTTP · serverless</span></h1>
+  </div>
+  <div class="sub">Lấy hồ sơ TikTok bằng HTTP thuần — chạy trên Vercel, không trình duyệt. Nhập <b>@username</b> để xem hồ sơ &amp; chỉ số.</div>
+
+  <div class="panel">
+    <div class="row">
+      <div class="field"><span class="at">@</span>
+        <input id="u" type="text" placeholder="vd: oppo.talent" autocomplete="off" spellcheck="false"/></div>
+      <button id="go">Lấy hồ sơ</button>
+    </div>
+    <div class="note">Nếu bị chặn (TikTok trả trang chống bot — hay gặp với IP datacenter của Vercel), đặt biến môi trường <code>PROXY_URL</code> (proxy residential) trong Project Settings rồi redeploy.</div>
+    <div id="status" class="status"></div>
+  </div>
+
+  <div id="result"></div>
+
+  <div class="foot">HTTP-only profile scraper · không cần trình duyệt · deploy-ready cho Vercel<br/>Cần danh sách video / quét sâu → dùng bản dashboard đầy đủ (chạy trên VPS).</div>
+</div>
+
+<script>
+  var nf = new Intl.NumberFormat("en-US");
+  function fmt(n){return nf.format(Math.round(n||0));}
+  function comp(n){n=n||0;if(n>=1e9)return(n/1e9).toFixed(n%1e9?1:0)+"B";if(n>=1e6)return(n/1e6).toFixed(n%1e6?1:0)+"M";if(n>=1e3)return(n/1e3).toFixed(n%1e3?1:0)+"K";return""+n;}
+  function esc(s){return(s||"").replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+  var uEl=document.getElementById("u"),btn=document.getElementById("go"),
+      st=document.getElementById("status"),res=document.getElementById("result");
+
+  function setStatus(t,cls){st.className="status"+(cls?" "+cls:"");st.innerHTML=t;}
+
+  async function run(){
+    var u=(uEl.value||"").trim().replace(/^@/,"");
+    if(!u){setStatus("Hãy nhập @username.","err");return;}
+    btn.disabled=true;res.innerHTML="";
+    setStatus('<span class="spin"></span>Đang lấy hồ sơ qua HTTP…');
+    try{
+      var r=await fetch("/api/scrape_online?username="+encodeURIComponent(u));
+      var d=await r.json();
+      if(d.status!=="success"||!d.profile||!d.profile.profile_url)
+        throw new Error((d.error&&d.error.message)||"Không lấy được hồ sơ.");
+      render(d.profile);
+      setStatus("Hoàn tất ✓ — hồ sơ lấy qua HTTP thuần","ok");
+    }catch(e){setStatus("Thất bại: "+e.message,"err");}
+    finally{btn.disabled=false;}
+  }
+
+  function render(p){
+    var name=p.nickname||p.username||"";
+    var ini=(name.trim().split(/\s+/).map(function(w){return w[0];}).slice(0,2).join("")||"?").toUpperCase();
+    var av=p.avatar_url
+      ? '<img class="av" src="'+esc(p.avatar_url)+'" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement(\'div\'),{className:\'av\',textContent:\''+ini+'\'}))"/>'
+      : '<div class="av">'+ini+'</div>';
+    var verif=p.is_verified?'<svg class="verif" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="11" fill="#2f6df6"/><path d="M7 12.5l3.2 3.2L17 9" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>':"";
+    res.innerHTML=
+      '<div class="panel" style="margin-top:18px">'+
+        '<div class="profile">'+av+
+          '<div class="pmain">'+
+            '<div class="pname"><h2>'+esc(name)+'</h2>'+verif+'</div>'+
+            '<div class="puser"><a href="'+esc(p.profile_url)+'" target="_blank">@'+esc(p.username)+'</a></div>'+
+            (p.signature?'<div class="pbio">'+esc(p.signature)+'</div>':'')+
+          '</div>'+
+        '</div>'+
+        '<div class="cards">'+
+          metric("Người theo dõi",comp(p.followers_count),fmt(p.followers_count))+
+          metric("Đang follow",comp(p.following_count),fmt(p.following_count))+
+          metric("Lượt thích",comp(p.total_likes),fmt(p.total_likes))+
+          metric("Số video",fmt(p.video_count),"",true)+
+        '</div>'+
+      '</div>';
+  }
+  function metric(k,v,s,acc){return '<div class="metric'+(acc?" acc":"")+'"><div class="k">'+k+'</div><div class="v">'+v+'</div><div class="s">'+(s||"")+'</div></div>';}
+
+  btn.addEventListener("click",run);
+  uEl.addEventListener("keydown",function(e){if(e.key==="Enter")run();});
+</script>
+</body>
+</html>

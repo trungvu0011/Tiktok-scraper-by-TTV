@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from src.config.settings import Settings
 from src.utils.logger import get_logger
 from src.scrapers.dispatch import run_scrape
+from src.scrapers.online.scraper import OnlineProfileScraper
 from src.storage import db
 from src.jobs.worker import queue
 from src.jobs.scheduler import scheduler
@@ -87,6 +88,16 @@ def scrape_endpoint(type: str, target: str, date_from: str = "", date_to: str = 
     if result.get("status") == "error" and "type" not in result:
         result["type"] = type
     return result
+
+
+# --------------------------------------------------------------------------- #
+# "Scrape online" — standalone, HTTP-only profile scrape (no browser, no queue,
+# no DB). This is the one endpoint that works on a serverless / browserless host.
+# Kept fully separate from the worker/dispatch path on purpose.
+# --------------------------------------------------------------------------- #
+@app.get("/api/scrape_online")
+def scrape_online_endpoint(username: str):
+    return OnlineProfileScraper(Settings()).scrape(username)
 
 
 # --------------------------------------------------------------------------- #

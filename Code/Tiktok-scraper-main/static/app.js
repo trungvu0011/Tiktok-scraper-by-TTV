@@ -975,12 +975,14 @@ const ICON = {
   clock: html`<svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4M12 13v3l2 1"/></svg>`,
   target: html`<svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>`,
   alert: html`<svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>`,
+  cloud: html`<svg viewBox="0 0 24 24" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M17.5 19a4.5 4.5 0 0 0 .5-8.97A6 6 0 0 0 6.34 9.5 4 4 0 0 0 7 17.5"/><path d="M12 12v6M9.5 15.5 12 18l2.5-2.5"/></svg>`,
 };
 
 function Sidebar({ mode, setMode, histCount }) {
   const tools = [
     { id: "overview", label: "Tổng quan", icon: ICON.grid },
     { id: "single", label: "Tài khoản", icon: ICON.user, hint: "@" },
+    { id: "online", label: "Scrape online", icon: ICON.cloud, hint: "HTTP" },
     { id: "link", label: "Link social", icon: ICON.link },
     { id: "transcript", label: "Transcript", icon: ICON.text },
   ];
@@ -1621,6 +1623,60 @@ function AlertsScreen() {
   </div>`;
 }
 
+/* ----------------------------------------------------------- scrape online */
+/* Standalone, browserless profile lookup (calls /api/scrape_online). Isolated
+ * from the account/queue tools — this is the deploy-friendly HTTP-only path. */
+function OnlineScrapeScreen() {
+  const [user, setUser] = usePersist("onlUser", "");
+  const [profile, setProfile] = usePersist("onlProfile", null);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState({ text: "", cls: "" });
+  const run = async () => {
+    const u = (user || "").trim().replace(/^@/, "");
+    if (!u) { setStatus({ text: "Hãy nhập @username.", cls: "err" }); return; }
+    setUser(u); setBusy(true); setStatus({ text: "Đang lấy hồ sơ qua HTTP… (không mở trình duyệt)", busy: true });
+    try {
+      const d = await jget("/api/scrape_online?username=" + encodeURIComponent(u));
+      if (d.status !== "success" || !d.profile || !d.profile.profile_url)
+        throw new Error(d.message || (d.error && d.error.message) || "Không lấy được hồ sơ.");
+      setProfile(d.profile);
+      setStatus({ text: "Hoàn tất ✓ — hồ sơ lấy qua HTTP thuần (chạy được khi deploy)", cls: "ok" });
+    } catch (e) {
+      setProfile(null);
+      setStatus({ text: "Thất bại: " + e.message, cls: "err" });
+    } finally { setBusy(false); }
+  };
+  return html`<div style=${{ animation: "fadeIn .3s ease both" }}>
+    <div className="panel">
+      <div className="card-head" style=${{ marginBottom: 12 }}>
+        <div>
+          <div className="card-h">Scrape online <span className="badge-http">HTTP · không browser</span></div>
+          <div className="card-sub">Lấy hồ sơ TikTok bằng HTTP thuần — <b>chạy được khi deploy online</b> (Vercel/VPS), không mở trình duyệt ẩn. Trả về hồ sơ + chỉ số (không gồm danh sách video).</div>
+        </div>
+      </div>
+      <div className="searchrow">
+        <div className="field" style=${{ flex: "0 1 440px" }}><span className="at">@</span>
+          <input type="text" value=${user} onChange=${(e) => setUser(e.target.value)}
+            onKeyDown=${(e) => e.key === "Enter" && run()}
+            placeholder="vd: oppo.talent" autoComplete="off" spellCheck="false"/></div>
+        <button onClick=${run} disabled=${busy}>${busy ? html`<${Spinner}/>Đang lấy…` : "Lấy hồ sơ"}</button>
+      </div>
+      <div className="note">Nếu TikTok chặn (trả trang chống bot), cấu hình <b>HTTP_PROXY/HTTPS_PROXY</b> (proxy residential) ở <span className="mono">.env</span> — IP datacenter dễ bị chặn hơn. Cần đủ dữ liệu video → dùng tool <b>Tài khoản</b> (quét bằng trình duyệt).</div>
+      ${status.text ? html`<${Status} s=${status}/>` : null}
+    </div>
+
+    ${profile ? html`<div>
+      <${ProfileCard} p=${profile} duration="" videoCount=${profile.video_count || 0}/>
+      <section><div className="cards">
+        <${Metric} k="Người theo dõi" val=${fmtCompact(profile.followers_count)} sub=${fmtNum(profile.followers_count)}/>
+        <${Metric} k="Đang follow" val=${fmtCompact(profile.following_count)} sub=${fmtNum(profile.following_count)}/>
+        <${Metric} k="Lượt thích" val=${fmtCompact(profile.total_likes)} sub=${fmtNum(profile.total_likes)}/>
+        <${Metric} k="Số video" val=${fmtNum(profile.video_count)} accent=${true}/>
+      </div></section>
+    </div>` : null}
+  </div>`;
+}
+
 /* ===========================================================  APP  ======= */
 function App() {
   const [mode, setModeRaw] = usePersist("mode", "overview");
@@ -1888,6 +1944,7 @@ function App() {
   const SCREENS = {
     overview: ["Tổng quan", "Bảng điều khiển thu thập dữ liệu"],
     single: ["Phân tích tài khoản", "Hồ sơ, chỉ số, biểu đồ & toàn bộ video"],
+    online: ["Scrape online", "Lấy hồ sơ qua HTTP — không cần trình duyệt, deploy-ready"],
     link: ["Quét theo link", "Tự nhận diện nền tảng · chỉ số + bình luận + transcript"],
     transcript: ["Transcript", "Phụ đề TikTok hoặc Whisper · 1 video hoặc hàng loạt"],
     competitors: ["Đối thủ", "Theo dõi & so sánh tăng trưởng nhiều tài khoản TikTok"],
@@ -1956,6 +2013,7 @@ function App() {
         ${m === "overview" ? html`<${HomeOverview} setMode=${setMode} onOpen=${openJob}
           history=${history} profile=${accProfile} videos=${accVideos}/>` : null}
         ${m === "single" ? html`<${AccountMode} st=${accSt} tabs=${null}/>` : null}
+        ${m === "online" ? html`<${OnlineScrapeScreen}/>` : null}
         ${m === "link" ? html`<${LinkMode} st=${linkSt}/>` : null}
         ${m === "transcript" ? html`<${TranscriptMode} st=${trSt} tabs=${null}/>` : null}
         ${m === "competitors" ? html`<${CompetitorsScreen} onOpen=${loadCompetitorView} pushJob=${pushJob}/>` : null}
