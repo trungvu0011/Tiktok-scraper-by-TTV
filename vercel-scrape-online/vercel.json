@@ -1,5 +1,5 @@
 {
   "functions": {
-    "api/scrape_online.py": { "maxDuration": 60 }
+    "api/scrape_online.py": { "maxDuration": 30 }
   }
 }
