@@ -280,6 +280,31 @@ def _diagnose(username: str) -> dict:
             blob = m.group(1)
             for k in ("itemList", "ItemList", "ItemModule", "post"):
                 out["embeds_%s" % k] = (('"%s"' % k) in blob)
+
+            # recursively hunt for an itemList array with real video items
+            found = {"max_len": 0, "sample_keys": None, "paths": []}
+
+            def walk(node, path):
+                if isinstance(node, dict):
+                    for kk, vv in node.items():
+                        if kk in ("itemList", "items") and isinstance(vv, list) and vv:
+                            found["paths"].append(path + "." + kk + "[%d]" % len(vv))
+                            if len(vv) > found["max_len"]:
+                                found["max_len"] = len(vv)
+                                it0 = vv[0] if isinstance(vv[0], dict) else {}
+                                found["sample_keys"] = list(it0.keys())[:12]
+                        walk(vv, path + "." + kk)
+                elif isinstance(node, list):
+                    for i, vv in enumerate(node[:50]):
+                        walk(vv, path + "[%d]" % i)
+
+            walk(data, "")
+            out["embedded_items_max_len"] = found["max_len"]
+            out["embedded_items_paths"] = found["paths"][:5]
+            out["embedded_item_keys"] = found["sample_keys"]
+            # also check the full HTML for other SSR script blobs
+            out["html_has_SIGI"] = ("SIGI_STATE" in html)
+            out["html_has_NEXT"] = ("__NEXT_DATA__" in html)
         except Exception as e:
             out["parse_err"] = str(e)
     # probe item_list raw
