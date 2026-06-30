@@ -252,6 +252,62 @@ def scrape_profile(username: str, max_videos: int = 0) -> dict:
     }
 
 
+def _diagnose(username: str) -> dict:
+    """Temporary diagnostic: what does the profile page embed, and what does the
+    item_list endpoint actually return? Used to decide the video strategy."""
+    username = (username or "").lstrip("@").strip()
+    url = "https://www.tiktok.com/@" + username
+    out = {"username": username}
+    opener = _opener()
+    try:
+        html = _fetch_html(opener, url)
+    except Exception as e:
+        return {"error": "fetch_html: %s" % e}
+    out["html_len"] = len(html)
+    m = _DATA_RE.search(html)
+    out["has_embedded"] = bool(m)
+    sec_uid = ""
+    if m:
+        try:
+            data = json.loads(m.group(1))
+            scope = data.get("__DEFAULT_SCOPE__", {})
+            out["scope_keys"] = list(scope.keys())
+            ud = scope.get("webapp.user-detail", {})
+            out["user_detail_keys"] = list(ud.keys())
+            sec_uid = ((ud.get("userInfo") or {}).get("user") or {}).get("secUid", "")
+            out["has_secUid"] = bool(sec_uid)
+            # any embedded items anywhere?
+            blob = m.group(1)
+            for k in ("itemList", "ItemList", "ItemModule", "post"):
+                out["embeds_%s" % k] = (('"%s"' % k) in blob)
+        except Exception as e:
+            out["parse_err"] = str(e)
+    # probe item_list raw
+    if sec_uid:
+        h = dict(_HEADERS)
+        h.update({"Accept": "application/json, text/plain, */*", "Referer": url,
+                  "Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "cors",
+                  "Sec-Fetch-Site": "same-origin", "X-Requested-With": "XMLHttpRequest"})
+        p = dict(_ITEM_PARAMS); p["secUid"] = sec_uid; p["cursor"] = "0"; p["referer"] = url
+        try:
+            req = urllib.request.Request(_ITEM_API + "?" + urlencode(p), headers=h)
+            with opener.open(req, timeout=_TIMEOUT) as resp:
+                body = _decode(resp)
+                out["itemlist_http"] = resp.status
+                out["itemlist_len"] = len(body)
+                out["itemlist_head"] = body[:200]
+                try:
+                    j = json.loads(body or "{}")
+                    out["itemlist_statusCode"] = j.get("statusCode")
+                    out["itemlist_count"] = len(j.get("itemList") or [])
+                    out["itemlist_hasMore"] = j.get("hasMore")
+                except Exception as e:
+                    out["itemlist_json_err"] = str(e)
+        except Exception as e:
+            out["itemlist_err"] = "%s: %s" % (type(e).__name__, e)
+    return out
+
+
 class handler(BaseHTTPRequestHandler):
     """Vercel Python entry point."""
 
@@ -267,6 +323,9 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802
         qs = parse_qs(urlparse(self.path).query)
         username = (qs.get("username") or [""])[0]
+        if (qs.get("debug") or [""])[0] == "1":
+            self._send(200, _diagnose(username))
+            return
         try:
             max_videos = int((qs.get("max") or ["0"])[0])
         except ValueError:
